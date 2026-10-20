@@ -1,0 +1,9 @@
+# Segredos: nunca versionar (só o .env.example)
+.env
+
+# Ambiente virtual e caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
