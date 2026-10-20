@@ -9,18 +9,16 @@ import pytest
 from fakes import PLAN_ARGS, ScriptedChatModel, ai, bad_request_error, call
 from langchain_core.messages import HumanMessage, ToolMessage
 
-pending = pytest.mark.skip(reason="loop pendente (P5)")
+from workshop_agentes.agent.config import AgentConfig
+from workshop_agentes.agent.loop import Agent
+from workshop_agentes.agent.memory import WorkingMemory
+from workshop_agentes.tools.core import finish, update_plan
+from workshop_agentes.tools.registry import ToolRegistry
+from workshop_agentes.tracing.report import totals
+from workshop_agentes.tracing.tracer import Tracer
 
 
 def make_agent(script, **config):
-    # Imports locais enquanto o loop não existe (mover para o topo na P5).
-    from workshop_agentes.agent.config import AgentConfig
-    from workshop_agentes.agent.loop import Agent
-    from workshop_agentes.agent.memory import WorkingMemory
-    from workshop_agentes.tools.core import finish, update_plan
-    from workshop_agentes.tools.registry import ToolRegistry
-    from workshop_agentes.tracing.tracer import Tracer
-
     model = ScriptedChatModel(script=list(script))
     registry = ToolRegistry()
     registry.register(update_plan)
@@ -60,7 +58,6 @@ def test_fake_model_raises_scripted_exception():
 # --- Loop (9.1) ----------------------------------------------------------------
 
 
-@pending
 def test_update_plan_then_finish():
     agent, model = make_agent([
         ai(call("update_plan", PLAN_ARGS), usage=None),  # caso usage_metadata=None
@@ -74,7 +71,6 @@ def test_update_plan_then_finish():
     assert model.bind_calls == 1  # bind_tools uma vez só
 
 
-@pending
 def test_parallel_calls_one_tool_message_per_id():
     a, b = call("update_plan", PLAN_ARGS), call("update_plan", {**PLAN_ARGS, "next_step": "Conclude."})
     agent, _ = make_agent([ai(a, b), ai(call("finish", {"answer": "ok"}))])
@@ -84,7 +80,6 @@ def test_parallel_calls_one_tool_message_per_id():
     assert agent.memory.check_invariant()
 
 
-@pending
 def test_terminal_with_other_call_answers_all_before_ending():
     f, u = call("finish", {"answer": "pronto"}), call("update_plan", PLAN_ARGS)
     agent, _ = make_agent([ai(f, u)])  # terminal ANTES da outra chamada
@@ -94,7 +89,6 @@ def test_terminal_with_other_call_answers_all_before_ending():
     assert agent.memory.check_invariant()
 
 
-@pending
 @pytest.mark.parametrize("bad_args", [{}, {"answer": 123}])
 def test_terminal_with_error_does_not_end(bad_args):
     agent, model = make_agent([
@@ -107,7 +101,6 @@ def test_terminal_with_error_does_not_end(bad_args):
     assert "error" in seen_by_model[-1]  # o modelo recebeu o erro do finish
 
 
-@pending
 def test_unknown_tool_returns_error_and_agent_continues():
     agent, model = make_agent([
         ai(call("nao_existe", {"x": 1})),
@@ -118,7 +111,6 @@ def test_unknown_tool_returns_error_and_agent_continues():
     assert tool_outputs(model.received[1]) == [{"error": "Unknown tool: nao_existe"}]
 
 
-@pending
 def test_invalid_or_missing_args_do_not_raise():
     missing_external = {k: v for k, v in PLAN_ARGS.items() if k != "external"}
     agent, model = make_agent(
@@ -130,7 +122,6 @@ def test_invalid_or_missing_args_do_not_raise():
     assert "error" in tool_outputs(model.received[1])[0]
 
 
-@pending
 def test_max_steps_without_terminal():
     agent, _ = make_agent([ai(call("update_plan", PLAN_ARGS))], max_steps=1)
     result = agent.run("tarefa")
@@ -139,7 +130,6 @@ def test_max_steps_without_terminal():
     assert result.steps == 1
 
 
-@pending
 @pytest.mark.parametrize(
     "content, expected",
     [("Resposta direta.", "Resposta direta."), ([{"type": "text", "text": "Em blocos."}], "Em blocos.")],
@@ -151,7 +141,6 @@ def test_text_only_response_ends_with_no_tool_call(content, expected):
     assert result.answer == expected
 
 
-@pending
 def test_model_failure_returns_error_without_raising():
     agent, _ = make_agent([bad_request_error()])
     result = agent.run("tarefa")
@@ -163,7 +152,6 @@ def test_model_failure_returns_error_without_raising():
     assert llm_span.attrs["error"] == "GoogleInvalidRequestError"
 
 
-@pending
 def test_tool_call_with_none_id_gets_generated_id():
     agent, _ = make_agent([
         ai(call("update_plan", PLAN_ARGS, id=None)),
@@ -175,10 +163,7 @@ def test_tool_call_with_none_id_gets_generated_id():
     assert agent.memory.check_invariant()
 
 
-@pending
 def test_spans_closed_and_totals_equal_sum_of_leaves():
-    from workshop_agentes.tracing.report import totals
-
     agent, _ = make_agent([
         ai(call("update_plan", PLAN_ARGS)),
         ai(call("update_plan", PLAN_ARGS), call("finish", {"answer": "ok"})),
@@ -194,7 +179,6 @@ def test_spans_closed_and_totals_equal_sum_of_leaves():
     assert total["input_tokens"] == 200 and total["output_tokens"] == 40
 
 
-@pending
 def test_run_twice_does_not_accumulate_and_keeps_first_result():
     agent, _ = make_agent([
         ai(call("finish", {"answer": "primeira"})),
@@ -211,7 +195,6 @@ def test_run_twice_does_not_accumulate_and_keeps_first_result():
     assert sum(isinstance(m, HumanMessage) for m in second.messages) == 1
 
 
-@pending
 def test_verbose_prints_external(capsys):
     agent, _ = make_agent(
         [ai(call("update_plan", PLAN_ARGS), call("finish", {"answer": "ok"}))], verbose=True
@@ -220,7 +203,6 @@ def test_verbose_prints_external(capsys):
     assert PLAN_ARGS["external"] in capsys.readouterr().out
 
 
-@pending
 def test_malformed_call_becomes_error_observation():
     agent, model = make_agent([
         ai(content=[], finish_reason="MALFORMED_FUNCTION_CALL"),
