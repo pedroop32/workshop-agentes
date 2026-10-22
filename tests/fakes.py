@@ -1,21 +1,17 @@
 """Dublês de teste: nada aqui acessa rede, chave ou cota.
 
-Os erros usam as classes reais do pacote (com o ClientError original em
-__cause__), no formato google.rpc que a API devolve.
+Os erros usam as classes reais do SDK groq (as que o ChatGroq deixa passar),
+com uma httpx.Response falsa: status, headers e o JSON de erro da API.
 """
 
 import itertools
 from typing import Any
 
-from google.genai.errors import ClientError
+import groq
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_google_genai.chat_models import (
-    GoogleAPIError,
-    GoogleInvalidRequestError,
-    GoogleRateLimitError,
-)
 from pydantic import Field
 
 # --- Modelo de chat falso --------------------------------------------------------
@@ -75,7 +71,7 @@ def call(name: str, args: Any = None, id: str | None = "auto") -> dict:
     }
 
 
-def ai(*calls: dict, content: Any = "", usage: dict | None = USAGE, finish_reason: str = "STOP") -> AIMessage:
+def ai(*calls: dict, content: Any = "", usage: dict | None = USAGE, finish_reason: str = "stop") -> AIMessage:
     """Resposta do modelo com tool_calls, usage_metadata e finish_reason."""
     return AIMessage(
         content=content,
@@ -103,35 +99,49 @@ class FlakyRunnable:
         return self.response
 
 
-def _rpc_error(code: int, status: str, details: list[dict]) -> dict:
-    return {"error": {"code": code, "message": f"fake {status}", "status": status, "details": details}}
+_REQUEST = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
 
 
-def rate_limit_error(per_day: bool = False, retry_delay: str | None = "7s") -> GoogleRateLimitError:
-    """429 como o pacote levanta. [A VERIFICAR na API real: formato do quotaId]"""
-    window = "PerDay" if per_day else "PerMinute"
-    details: list[dict] = [
-        {
-            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
-            "violations": [{"quotaId": f"GenerateRequests{window}PerProjectPerModel-FreeTier"}],
-        }
-    ]
-    if retry_delay is not None:
-        details.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay})
-    cause = ClientError(429, _rpc_error(429, "RESOURCE_EXHAUSTED", details))
-    exc = GoogleRateLimitError(f"Error calling model 'fake' (RESOURCE_EXHAUSTED): {cause}")
-    exc.__cause__ = cause
-    return exc
+def _status_error(cls: type[groq.APIStatusError], code: int, error: dict, headers: dict | None = None):
+    """Exceção do SDK como ele a monta: mensagem "Error code: N - {json}" e body = JSON decodificado."""
+    body = {"error": error}
+    response = httpx.Response(code, headers=headers or {}, json=body, request=_REQUEST)
+    return cls(f"Error code: {code} - {body}", response=response, body=body)
 
 
-def server_error(code: int = 503) -> GoogleAPIError:
-    """5xx como o pacote levanta."""
-    return GoogleAPIError(code=code, response_json=_rpc_error(code, "UNAVAILABLE", []))
+def rate_limit_error(per_day: bool = False, retry_after: str | None = "7") -> groq.RateLimitError:
+    """429 como o SDK levanta. [A VERIFICAR na API real: texto da mensagem]"""
+    window = "requests per day (RPD)" if per_day else "tokens per minute (TPM)"
+    error = {
+        "message": f"Rate limit reached for model `fake` on {window}: Limit 8000. Please try again in 7s.",
+        "type": "tokens",
+        "code": "rate_limit_exceeded",
+    }
+    headers = {"retry-after": retry_after} if retry_after is not None else None
+    return _status_error(groq.RateLimitError, 429, error, headers)
 
 
-def bad_request_error() -> GoogleInvalidRequestError:
-    """400 como o pacote levanta (nunca deve ser retentado)."""
-    cause = ClientError(400, _rpc_error(400, "INVALID_ARGUMENT", []))
-    exc = GoogleInvalidRequestError(f"Error calling model 'fake' (INVALID_ARGUMENT): {cause}")
-    exc.__cause__ = cause
-    return exc
+def server_error(code: int = 503) -> groq.InternalServerError:
+    """5xx como o SDK levanta."""
+    return _status_error(groq.InternalServerError, code, {"message": "fake unavailable", "type": "internal_server_error"})
+
+
+def bad_request_error() -> groq.BadRequestError:
+    """400 comum como o SDK levanta (nunca deve ser retentado)."""
+    return _status_error(groq.BadRequestError, 400, {"message": "fake invalid", "type": "invalid_request_error"})
+
+
+def tool_use_failed_error() -> groq.BadRequestError:
+    """400 de chamada de ferramenta malformada. [A VERIFICAR na API real: code e failed_generation]"""
+    error = {
+        "message": "Failed to call a function. Please adjust your prompt.",
+        "type": "invalid_request_error",
+        "code": "tool_use_failed",
+        "failed_generation": '{"name": "finish", "arguments": {"answer": }',
+    }
+    return _status_error(groq.BadRequestError, 400, error)
+
+
+def connection_error() -> groq.APITimeoutError:
+    """Timeout como o SDK levanta (subclasse de APIConnectionError)."""
+    return groq.APITimeoutError(request=_REQUEST)

@@ -121,5 +121,8 @@ class Agent:
 
 
 def _is_malformed(ai: AIMessage) -> bool:
-    """Resposta sem tool_calls válidas porque a chamada veio malformada."""
-    return bool(ai.invalid_tool_calls) or ai.response_metadata.get("finish_reason") == "MALFORMED_FUNCTION_CALL"
+    """Resposta sem tool_calls válidas porque os argumentos não puderam ser lidos.
+
+    O 400 de chamada malformada do Groq é retentado em invoke_with_retry.
+    """
+    return bool(ai.invalid_tool_calls)

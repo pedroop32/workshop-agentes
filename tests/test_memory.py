@@ -22,11 +22,11 @@ def test_reset_keeps_only_system_prompt():
 def test_append_and_read_preserve_ai_message():
     mem = WorkingMemory("sys")
     msg = ai(call("update_plan", PLAN_ARGS))
-    msg.additional_kwargs["__gemini_function_call_thought_signatures__"] = {"x": "sig=="}
+    msg.additional_kwargs["reasoning_content"] = "raciocínio do modelo"
     mem.add_user("tarefa")
     mem.add_model(msg)
     assert mem.messages[2] is msg  # o mesmo objeto, sem cópia nem reconstrução
-    assert mem.messages[2].additional_kwargs["__gemini_function_call_thought_signatures__"] == {"x": "sig=="}
+    assert mem.messages[2].additional_kwargs["reasoning_content"] == "raciocínio do modelo"
     assert isinstance(mem.messages[1], HumanMessage)
 
 

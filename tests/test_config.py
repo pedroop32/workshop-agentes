@@ -23,5 +23,5 @@ def test_agent_config_defaults():
     assert "update_plan" in SYSTEM_PROMPT and "finish" in SYSTEM_PROMPT
 
 
-def test_default_model_is_flash_family():
-    assert DEFAULT_MODEL.startswith("gemini-") and "flash" in DEFAULT_MODEL
+def test_default_model_is_groq_gpt_oss():
+    assert DEFAULT_MODEL == "openai/gpt-oss-120b"

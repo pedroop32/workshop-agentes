@@ -7,7 +7,7 @@ class WorkingMemory:
     """Lista de mensagens com só append e leitura sequencial.
 
     A API é stateless: tudo fica aqui e é reenviado. O AIMessage é guardado sem
-    modificação, o que preserva as thought signatures. Sem truncamento na v1
+    modificação (nada do que o provedor devolveu se perde). Sem truncamento na v1
     (se houver no futuro, nunca separar uma chamada do seu ToolMessage).
     """
 

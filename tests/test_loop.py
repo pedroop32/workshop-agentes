@@ -7,7 +7,7 @@ import json
 
 import pytest
 from fakes import PLAN_ARGS, ScriptedChatModel, ai, bad_request_error, call
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from workshop_agentes.agent.config import AgentConfig
 from workshop_agentes.agent.loop import Agent
@@ -145,11 +145,11 @@ def test_model_failure_returns_error_without_raising():
     agent, _ = make_agent([bad_request_error()])
     result = agent.run("tarefa")
     assert result.reason == "error"
-    assert result.error == "GoogleInvalidRequestError"  # só o tipo, nunca a mensagem
+    assert result.error == "BadRequestError"  # só o tipo, nunca a mensagem
     assert result.answer is None
     assert all(s.t_end is not None for s in result.spans)
     llm_span = next(s for s in result.spans if s.kind == "llm_call")
-    assert llm_span.attrs["error"] == "GoogleInvalidRequestError"
+    assert llm_span.attrs["error"] == "BadRequestError"
 
 
 def test_tool_call_with_none_id_gets_generated_id():
@@ -205,7 +205,12 @@ def test_verbose_prints_external(capsys):
 
 def test_malformed_call_becomes_error_observation():
     agent, model = make_agent([
-        ai(content=[], finish_reason="MALFORMED_FUNCTION_CALL"),
+        AIMessage(
+            content="",
+            invalid_tool_calls=[
+                {"name": "finish", "args": '{"answer": ', "id": "call_bad", "error": "JSON inválido", "type": "invalid_tool_call"}
+            ],
+        ),
         ai(call("finish", {"answer": "ok"})),
     ])
     result = agent.run("tarefa")

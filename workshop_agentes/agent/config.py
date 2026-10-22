@@ -5,15 +5,16 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-# PROVISÓRIO: estável e com plano gratuito nas páginas models/pricing (2026-10-20).
-# Confirmar na integração com a API; alternativa: "gemini-3.5-flash-lite".
-# O secret/variável GEMINI_MODEL tem prioridade sobre este valor.
-DEFAULT_MODEL = "gemini-3.8-flash"
+# Modelo de produção do Groq com tool use e cache de prompt (docs, 2026-10-21).
+# Não faz chamadas paralelas: update_plan e finish vêm em passos separados.
+# Alternativa com chamadas paralelas: "llama-3.3-70b-versatile".
+# O secret/variável GROQ_MODEL tem prioridade sobre este valor.
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
+# Vale para modelos com uma chamada por resposta (sem exigir update_plan "em toda resposta").
 SYSTEM_PROMPT = (
-    "Before calling any other tool, in every response you MUST first call `update_plan` "
-    "with all required parameters (previous_step, plan, next_step, external). "
-    "When you have the final answer, call `finish`."
+    "Call `update_plan` with all required parameters (previous_step, plan, next_step, external) "
+    "before any other tool call. When you have the final answer, call `finish`."
 )
 
 
@@ -47,7 +48,7 @@ def get_secret(name: str, default: str | None = None) -> str | None:
 class AgentConfig:
     """Parâmetros do agente.
 
-    temperature=None usa o padrão do modelo (recomendado no Gemini 3);
+    temperature=None usa o padrão do ChatGroq (0.7);
     verbose=True imprime ao vivo a nota "external" de cada update_plan.
     """
 
