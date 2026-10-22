@@ -102,6 +102,13 @@ def test_report_has_steps_functions_totals_and_note():
     assert APPROXIMATION_NOTE in report
 
 
+def test_report_shows_retries():
+    tracer = Tracer()
+    with tracer.span("run", "agent"), tracer.span("step", "step_0"), tracer.span("llm_call", "model") as s:
+        s.attrs.update(attempts=2, retries=["RateLimitError OTPM (espera 2.3s)"])
+    assert "  retentado: RateLimitError OTPM (espera 2.3s)" in format_report(tracer.spans)
+
+
 def test_report_shows_errors():
     tracer = Tracer()
     with pytest.raises(RuntimeError):

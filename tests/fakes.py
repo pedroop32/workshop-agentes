@@ -109,12 +109,14 @@ def _status_error(cls: type[groq.APIStatusError], code: int, error: dict, header
     return cls(f"Error code: {code} - {body}", response=response, body=body)
 
 
-def rate_limit_error(per_day: bool = False, retry_after: str | None = "7") -> groq.RateLimitError:
+def rate_limit_error(
+    per_day: bool = False, retry_after: str | None = "7", window: str | None = None
+) -> groq.RateLimitError:
     """429 como o SDK levanta, no formato visto na API real (2026-10-21).
 
     [A VERIFICAR: texto do 429 diário, ainda não observado]
     """
-    window = "requests per day (RPD)" if per_day else "requests per minute (RPM)"
+    window = window or ("requests per day (RPD)" if per_day else "requests per minute (RPM)")
     error = {
         "message": f"Rate limit reached for model `fake` in organization `org_fake` service tier `on_demand` "
         f"on {window}: Limit 3, Used 3, Requested 1. Please try again in 7s.",

@@ -16,6 +16,10 @@ from langchain_core.runnables import Runnable
 from langchain_groq import ChatGroq
 
 REQUEST_TIMEOUT = 30.0  # segundos por requisição (o padrão do SDK é 60)
+# API REAL (2026-10-21, qwen3.8-27b): sem limite ou com 2048, a resposta dentro do finish
+# veio cortada em ~1000 caracteres, sem aviso (finish_reason continuou "tool_calls");
+# com 4000 e 8192 veio completa (a de 8192 com 2901 caracteres). O máximo do modelo é 16384.
+MAX_OUTPUT_TOKENS = 8192
 
 
 class DailyQuotaError(RuntimeError):
@@ -28,10 +32,17 @@ def build_llm(model: str, api_key: str, temperature: float | None = None) -> Bas
     - max_retries=0 desliga o retry do SDK (padrão: 2): o único ponto de retry é
       invoke_with_retry (D9).
     - timeout explícito de REQUEST_TIMEOUT por requisição.
+    - max_tokens=MAX_OUTPUT_TOKENS: limite de saída sempre enviado (ver a constante).
     - temperature=None não passa o parâmetro: vale o padrão do ChatGroq (0.7).
       O pacote sempre envia uma temperatura; não há como usar o padrão da API.
     """
-    kwargs: dict[str, Any] = {"model": model, "api_key": api_key, "max_retries": 0, "timeout": REQUEST_TIMEOUT}
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "max_retries": 0,
+        "timeout": REQUEST_TIMEOUT,
+        "max_tokens": MAX_OUTPUT_TOKENS,
+    }
     if temperature is not None:
         kwargs["temperature"] = temperature
     return ChatGroq(**kwargs)
@@ -45,6 +56,7 @@ def invoke_with_retry(
     base_delay: float = 1.0,
     max_delay: float = 30.0,
     sleep: Callable[[float], None] = time.sleep,
+    on_retry: Callable[[BaseException, float], None] | None = None,
 ) -> tuple[AIMessage, int]:
     """Chama runnable.invoke(messages) com backoff exponencial + jitter, sempre limitado.
 
@@ -53,6 +65,7 @@ def invoke_with_retry(
     Espera máxima por chamada: (max_attempts - 1) * (max_delay + base_delay),
     ~62 s no padrão. Erro não retentável (ex.: 400) ou a última falha são
     levantados como vieram; limite diário esgotado vira DailyQuotaError na hora.
+    on_retry(exc, espera), se dado, é chamado antes de cada nova tentativa (tracing).
     """
     if max_attempts < 1:
         raise ValueError("max_attempts deve ser >= 1")
@@ -72,7 +85,10 @@ def invoke_with_retry(
                 delay = min(max_delay, base_delay * 2 ** (attempt - 1))
             elif delay > max_delay:
                 raise  # esperar tanto travaria a execução: falha rápido
-            sleep(delay + random.uniform(0, base_delay))  # jitter evita rajadas sincronizadas
+            delay += random.uniform(0, base_delay)  # jitter evita rajadas sincronizadas
+            if on_retry is not None:
+                on_retry(exc, delay)
+            sleep(delay)
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -108,15 +124,22 @@ def _is_tool_use_failed(exc: BaseException) -> bool:
 
 
 def rate_limit_window(exc: BaseException) -> str | None:
-    """Limite estourado num 429: "RPM", "TPM", "RPD" ou "TPD" (None se não for 429).
+    """Limite estourado num 429: "RPM", "RPD", "TPM", "TPD", "ITPM" ou "OTPM" (None se não for 429).
 
-    A mensagem real nomeia a janela, ex.: "on requests per minute (RPM)" (visto em
-    2026-10-21). Seguro de exibir: a mensagem inteira tem o id da organização.
+    A mensagem real nomeia a janela, ex.: "on requests per minute (RPM)" e "on output
+    tokens per minute (OTPM)" (vistos em 2026-10-21; o OTPM não vem nos cabeçalhos).
+    Seguro de exibir: a mensagem inteira tem o id da organização.
     """
     if not isinstance(exc, groq.RateLimitError):
         return None
-    match = re.search(r"\(([RT]P[MD])\)", str(_error_body(exc).get("message", exc)))
+    match = re.search(r"\(([IO]?TP[MD]|RP[MD])\)", str(_error_body(exc).get("message", exc)))
     return match.group(1) if match else None
+
+
+def error_label(exc: BaseException) -> str:
+    """Rótulo curto e seguro de exibir: tipo + limite, código ou status (nunca a mensagem)."""
+    detail = rate_limit_window(exc) or _error_body(exc).get("code") or getattr(exc, "status_code", None)
+    return f"{type(exc).__name__} {detail}" if detail else type(exc).__name__
 
 
 def _is_daily_quota(exc: BaseException) -> bool:

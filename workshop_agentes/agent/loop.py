@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from workshop_agentes.agent.config import AgentConfig
 from workshop_agentes.agent.memory import WorkingMemory
-from workshop_agentes.llm import invoke_with_retry, text_of
+from workshop_agentes.llm import error_label, invoke_with_retry, text_of
 from workshop_agentes.tools.registry import ToolRegistry
 from workshop_agentes.tracing.tracer import Span, Tracer
 
@@ -71,7 +71,13 @@ class Agent:
                 with self.tracer.span("step", f"step_{step}"):
                     try:
                         with self.tracer.span("llm_call", "model") as s:
-                            ai, attempts = invoke_with_retry(self.llm, self.memory.messages)
+                            # Cada tentativa que falhou e foi retentada: rótulo seguro + espera.
+                            retries = s.attrs["retries"] = []
+                            ai, attempts = invoke_with_retry(
+                                self.llm,
+                                self.memory.messages,
+                                on_retry=lambda exc, delay: retries.append(f"{error_label(exc)} (espera {delay:.1f}s)"),
+                            )
                             s.attrs["attempts"] = attempts
                             s.attrs["usage"] = ai.usage_metadata or {}
                             s.attrs["finish_reason"] = ai.response_metadata.get("finish_reason")

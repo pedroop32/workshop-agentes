@@ -4,11 +4,14 @@ Escritos antes do loop para revelar cedo problemas de interface.
 """
 
 import json
+from functools import partial
 
 import pytest
-from fakes import PLAN_ARGS, ScriptedChatModel, ai, bad_request_error, call
+from fakes import PLAN_ARGS, ScriptedChatModel, ai, bad_request_error, call, tool_use_failed_error
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from workshop_agentes import llm
+from workshop_agentes.agent import loop
 from workshop_agentes.agent.config import AgentConfig
 from workshop_agentes.agent.loop import Agent
 from workshop_agentes.agent.memory import WorkingMemory
@@ -150,6 +153,17 @@ def test_model_failure_returns_error_without_raising():
     assert all(s.t_end is not None for s in result.spans)
     llm_span = next(s for s in result.spans if s.kind == "llm_call")
     assert llm_span.attrs["error"] == "BadRequestError"
+
+
+def test_retried_errors_are_traced_in_the_llm_span(monkeypatch):
+    monkeypatch.setattr(loop, "invoke_with_retry", partial(llm.invoke_with_retry, sleep=lambda seconds: None))
+    agent, _ = make_agent([tool_use_failed_error(), ai(call("finish", {"answer": "ok"}))])
+    result = agent.run("tarefa")
+    assert result.reason == "finish"
+    llm_span = next(s for s in result.spans if s.kind == "llm_call")
+    assert llm_span.attrs["attempts"] == 2
+    assert len(llm_span.attrs["retries"]) == 1
+    assert llm_span.attrs["retries"][0].startswith("BadRequestError tool_use_failed (espera ")
 
 
 def test_tool_call_with_none_id_gets_generated_id():

@@ -130,8 +130,31 @@ def test_is_retryable_classification():
 def test_rate_limit_window_names_the_limit():
     assert llm.rate_limit_window(rate_limit_error()) == "RPM"
     assert llm.rate_limit_window(rate_limit_error(per_day=True)) == "RPD"
+    assert llm.rate_limit_window(rate_limit_error(window="output tokens per minute (OTPM)")) == "OTPM"
     assert llm.rate_limit_window(server_error()) is None
     assert llm.rate_limit_window(ValueError("bug local")) is None
+
+
+def test_otpm_is_retried_not_daily():
+    otpm = rate_limit_error(window="output tokens per minute (OTPM)")
+    assert llm._is_retryable(otpm) and not llm._is_daily_quota(otpm)
+
+
+def test_error_label_is_short_and_safe():
+    assert llm.error_label(rate_limit_error(window="output tokens per minute (OTPM)")) == "RateLimitError OTPM"
+    assert llm.error_label(tool_use_failed_error()) == "BadRequestError tool_use_failed"
+    assert llm.error_label(server_error(503)) == "InternalServerError 503"
+    assert llm.error_label(connection_error()) == "APITimeoutError"
+    assert "org_fake" not in llm.error_label(rate_limit_error())
+
+
+def test_on_retry_reports_each_retry_with_its_wait():
+    seen: list[tuple[str, float]] = []
+    sleep = SleepRecorder()
+    runnable = FlakyRunnable([rate_limit_error(retry_after="7"), server_error()])
+    invoke_with_retry(runnable, [], sleep=sleep, on_retry=lambda exc, delay: seen.append((type(exc).__name__, delay)))
+    assert [name for name, _ in seen] == ["RateLimitError", "InternalServerError"]
+    assert [delay for _, delay in seen] == sleep.delays  # a espera informada é a mesma usada
 
 
 def test_suggested_delay_reads_retry_after_header():
@@ -174,6 +197,7 @@ def test_build_llm_defaults(no_env_keys):
     assert isinstance(model, BaseChatModel)
     assert model.max_retries == 0  # retry só em invoke_with_retry (D9)
     assert model.request_timeout == llm.REQUEST_TIMEOUT
+    assert model.max_tokens == llm.MAX_OUTPUT_TOKENS  # sem ele o Groq cortou respostas no finish
     assert model.temperature == 0.7  # não passada: padrão do ChatGroq
     assert "chave-falsa" not in repr(model)
 

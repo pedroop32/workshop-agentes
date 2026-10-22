@@ -72,6 +72,9 @@ def _step_lines(number: int, step: Span, kids: list[Span]) -> list[str]:
         f"total={usage['total_tokens']} | latência {latency} | finish_reason={finish} | tentativas={attempts}",
         f"  ferramentas: {', '.join(s.name for s in tool_calls) or '-'}",
     ]
+    for s in llm_calls:
+        if s.attrs.get("retries"):
+            lines.append(f"  retentado: {'; '.join(s.attrs['retries'])}")
     for s in kids:
         if "error" in s.attrs:
             lines.append(f"  erro em {s.name}: {s.attrs['error']}")

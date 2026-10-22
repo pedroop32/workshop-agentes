@@ -98,6 +98,12 @@ Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
   `openai/gpt-oss-120b` falhou nessa tarefa (erro 400 `tool_use_failed` ao chamar `finish` com uma resposta longa em
   Markdown). Se aparecer "modelo não encontrado", o notebook lista os modelos ativos para a sua chave.
 - **Temperatura:** por padrão não é passada, e vale o padrão do `ChatGroq` (0.7).
+- **Tamanho da resposta:** `build_llm` sempre envia `max_tokens=8192`. Sem limite ou com 2048, o Groq cortou a resposta
+  dentro do `finish` em ~1000 caracteres, sem avisar (o `finish_reason` continuou `tool_calls`); com 8192 ela veio
+  completa.
+- **Limite de saída (OTPM):** além dos limites por requisição e por token, o qwen tem um limite de tokens de **saída** por
+  minuto (1000 no plano gratuito testado). Ele não aparece nos cabeçalhos da resposta, só no erro 429; na prática cabe
+  mais ou menos um run por minuto. O relatório de tracing mostra cada tentativa retentada (ex.: `RateLimitError OTPM`).
 - **Limites do plano gratuito:** cada passo do agente é uma chamada à API (`max_steps=8` por padrão) e reenvia o histórico
   inteiro, então os tokens de entrada crescem a cada passo; o limite de **tokens por minuto** é o que costuma estourar
   primeiro.
