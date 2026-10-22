@@ -20,7 +20,8 @@ def test_agent_config_defaults():
     assert cfg.temperature is None
     assert cfg.verbose is True
     assert cfg.system_prompt == SYSTEM_PROMPT
-    assert "update_plan" in SYSTEM_PROMPT and "finish" in SYSTEM_PROMPT
+    assert "update_plan" in SYSTEM_PROMPT and "plain text" in SYSTEM_PROMPT
+    assert "finish" not in SYSTEM_PROMPT  # a resposta final vem em texto (no_tool_call)
 
 
 def test_default_model_is_groq_qwen():

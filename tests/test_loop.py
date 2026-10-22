@@ -21,11 +21,12 @@ from workshop_agentes.tracing.report import totals
 from workshop_agentes.tracing.tracer import Tracer
 
 
-def make_agent(script, **config):
+def make_agent(script, with_finish=True, **config):
     model = ScriptedChatModel(script=list(script))
     registry = ToolRegistry()
     registry.register(update_plan)
-    registry.register(finish, terminal=True)
+    if with_finish:  # mecanismo de ferramenta terminal (D5); o agente padrão não registra finish
+        registry.register(finish, terminal=True)
     cfg = AgentConfig(**{"verbose": False, **config})
     agent = Agent(model, registry, WorkingMemory(cfg.system_prompt), Tracer(), cfg)
     return agent, model
@@ -217,18 +218,60 @@ def test_verbose_prints_external(capsys):
     assert PLAN_ARGS["external"] in capsys.readouterr().out
 
 
-def test_malformed_call_becomes_error_observation():
+BAD_CALL = {"name": "finish", "args": '{"answer": ', "id": "call_bad", "error": "JSON inválido", "type": "invalid_tool_call"}
+
+
+def test_malformed_call_is_answered_with_a_tool_message():
     agent, model = make_agent([
-        AIMessage(
-            content="",
-            invalid_tool_calls=[
-                {"name": "finish", "args": '{"answer": ', "id": "call_bad", "error": "JSON inválido", "type": "invalid_tool_call"}
-            ],
-        ),
+        AIMessage(content="", invalid_tool_calls=[BAD_CALL]),
         ai(call("finish", {"answer": "ok"})),
     ])
     result = agent.run("tarefa")
     assert result.reason == "finish" and result.steps == 2
-    observation = model.received[1][-1]
-    assert isinstance(observation, HumanMessage) and "error" in json.loads(observation.content)
+    observation = model.received[1][-1]  # o ChatGroq reenvia a chamada inválida: precisa de resposta por id
+    assert isinstance(observation, ToolMessage) and observation.tool_call_id == "call_bad"
+    assert "error" in json.loads(observation.content)
+    bad_span = next(s for s in result.spans if s.kind == "tool_call" and s.attrs.get("error"))
+    assert bad_span.attrs["error"] == "MalformedArguments"
     assert agent.memory.check_invariant()
+
+
+def test_valid_and_malformed_calls_in_one_response_are_all_answered():
+    agent, _ = make_agent([
+        AIMessage(content="", tool_calls=[call("update_plan", PLAN_ARGS)], invalid_tool_calls=[BAD_CALL]),
+        ai(call("finish", {"answer": "ok"})),
+    ])
+    result = agent.run("tarefa")
+    assert result.reason == "finish"
+    assert [m.tool_call_id for m in tool_results(result.messages)][1] == "call_bad"  # depois da válida
+    assert agent.memory.check_invariant()
+
+
+def test_text_answer_after_plan_ends_with_no_tool_call():
+    agent, _ = make_agent(
+        [ai(call("update_plan", PLAN_ARGS), finish_reason="tool_calls"), ai(content="Resposta final.")],
+        with_finish=False,
+    )
+    result = agent.run("tarefa")
+    assert result.reason == "no_tool_call" and result.steps == 2
+    assert result.answer == "Resposta final." and result.finish_reason == "stop"
+    run_span = next(s for s in result.spans if s.kind == "run")
+    assert run_span.attrs["reason"] == "no_tool_call" and run_span.attrs["finish_reason"] == "stop"
+    assert agent.memory.check_invariant()
+
+
+def test_text_cut_by_token_limit_ends_with_length():
+    agent, _ = make_agent([ai(content="Resposta cort", finish_reason="length")], with_finish=False)
+    result = agent.run("tarefa")
+    assert result.reason == "length"  # não finge que a resposta está completa
+    assert result.answer == "Resposta cort" and result.finish_reason == "length"
+
+
+def test_max_steps_and_error_are_recorded_in_the_run_span():
+    agent, _ = make_agent([ai(call("update_plan", PLAN_ARGS))], max_steps=1)
+    run_span = next(s for s in agent.run("tarefa").spans if s.kind == "run")
+    assert run_span.attrs["reason"] == "max_steps"
+    agent, _ = make_agent([bad_request_error()])
+    result = agent.run("tarefa")
+    run_span = next(s for s in result.spans if s.kind == "run")
+    assert run_span.attrs["reason"] == "error" and result.finish_reason is None

@@ -217,5 +217,7 @@ def test_list_models_keeps_active_sorted(monkeypatch):
         SimpleNamespace(id="sem-flag"),
     ]
     fake_client = SimpleNamespace(models=SimpleNamespace(list=lambda: SimpleNamespace(data=models)))
-    monkeypatch.setattr(llm.groq, "Groq", lambda api_key: fake_client)
+    created: dict = {}
+    monkeypatch.setattr(llm.groq, "Groq", lambda **kwargs: created.update(kwargs) or fake_client)
     assert list_models("chave-falsa") == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "sem-flag"]
+    assert created["max_retries"] == 0 and created["timeout"] == llm.REQUEST_TIMEOUT  # mesma política do resto

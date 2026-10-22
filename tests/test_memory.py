@@ -1,7 +1,7 @@
 """Testes offline de agent/memory.py."""
 
 from fakes import PLAN_ARGS, ai, call
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from workshop_agentes.agent.memory import WorkingMemory
 
@@ -17,6 +17,16 @@ def test_reset_keeps_only_system_prompt():
     assert len(mem.messages) == 1
     assert isinstance(mem.messages[0], SystemMessage)
     assert mem.messages[0].content == "sys"
+
+
+def test_invariant_counts_malformed_calls():
+    bad = {"name": "finish", "args": "{", "id": "bad_1", "error": "x", "type": "invalid_tool_call"}
+    mem = WorkingMemory("sys")
+    mem.add_user("tarefa")
+    mem.add_model(AIMessage(content="", invalid_tool_calls=[bad]))
+    assert not mem.check_invariant()  # a chamada malformada também é reenviada: precisa de resposta
+    mem.add_tool_result(ToolMessage(content='{"error": "x"}', tool_call_id="bad_1"))
+    assert mem.check_invariant()
 
 
 def test_append_and_read_preserve_ai_message():

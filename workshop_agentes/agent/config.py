@@ -12,10 +12,12 @@ from dotenv import load_dotenv
 # O secret/variável GROQ_MODEL tem prioridade sobre este valor.
 DEFAULT_MODEL = "qwen/qwen3.8-27b"
 
-# Vale para modelos com uma chamada por resposta (sem exigir update_plan "em toda resposta").
+# A resposta final vem em texto puro, como no padrão da documentação do Groq: o loop termina
+# com reason "no_tool_call". Resposta longa fora do JSON de ferramenta evita o tool_use_failed
+# e os cortes vistos quando ela ia dentro do finish (2026-10-21).
 SYSTEM_PROMPT = (
-    "Call `update_plan` with all required parameters (previous_step, plan, next_step, external) "
-    "before any other tool call. When you have the final answer, call `finish`."
+    "Before acting, call `update_plan` with all required parameters (previous_step, plan, next_step, external). "
+    "When you have the final answer, reply to the User in plain text, without calling any tool."
 )
 
 

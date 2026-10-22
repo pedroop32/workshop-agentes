@@ -178,5 +178,5 @@ def list_models(api_key: str) -> list[str]:
 
     A API não diz quais aceitam ferramentas: confira na página Tool Use da documentação.
     """
-    client = groq.Groq(api_key=api_key)
+    client = groq.Groq(api_key=api_key, max_retries=0, timeout=REQUEST_TIMEOUT)  # mesma política do resto
     return sorted(model.id for model in client.models.list().data if getattr(model, "active", True))

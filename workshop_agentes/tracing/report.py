@@ -13,6 +13,7 @@ APPROXIMATION_NOTE = (
     "Nota: o input_tokens de cada chamada inclui todo o histórico reenviado (inclusive o que o "
     "modelo gerou antes); a variação entre chamadas é só uma aproximação do custo de cada passo."
 )
+FAILED_ATTEMPTS_NOTE = "Nota: tentativas que falharam não entram nos tokens (a API não devolve usage em erros)."
 
 
 def usage_of(span: Span) -> dict[str, int]:
@@ -31,8 +32,15 @@ def totals(spans: Sequence[Span]) -> dict[str, float]:
     return result
 
 
+def attempts_of(span: Span) -> int:
+    """Tentativas de um llm_call; numa chamada que falhou, são os retries + a última."""
+    if "attempts" in span.attrs:
+        return int(span.attrs["attempts"])
+    return len(span.attrs.get("retries") or []) + 1 if "error" in span.attrs else 0
+
+
 def format_report(spans: Sequence[Span]) -> str:
-    """Resumo por passo, por função e total: tokens, latência, finish_reason e plano."""
+    """Resumo por passo, por função e total: tokens, latência, finish_reason, plano e motivo de parada."""
     children: dict[int | None, list[Span]] = defaultdict(list)
     for s in spans:
         children[s.parent_id].append(s)
@@ -55,7 +63,13 @@ def format_report(spans: Sequence[Span]) -> str:
         f"tokens: in={total['input_tokens']} out={total['output_tokens']} total={total['total_tokens']}"
         f" | latência das folhas={total['latency']:.2f}s{run_latency}"
     )
+    if run and "reason" in run.attrs:
+        lines.append(
+            f"Motivo de parada: {run.attrs['reason']} | finish_reason da última resposta: {run.attrs.get('finish_reason')}"
+        )
     lines.append(APPROXIMATION_NOTE)
+    if any(s.kind == "llm_call" and (s.attrs.get("retries") or "error" in s.attrs) for s in spans):
+        lines.append(FAILED_ATTEMPTS_NOTE)
     return "\n".join(lines)
 
 
@@ -64,7 +78,7 @@ def _step_lines(number: int, step: Span, kids: list[Span]) -> list[str]:
     tool_calls = [s for s in kids if s.kind == "tool_call"]
     usage = {key: sum(usage_of(s)[key] for s in llm_calls) for key in TOKEN_KEYS}
     finish = ", ".join(str(s.attrs.get("finish_reason")) for s in llm_calls) or "-"
-    attempts = sum(s.attrs.get("attempts", 0) for s in llm_calls)
+    attempts = sum(attempts_of(s) for s in llm_calls)
     latency = f"{step.latency:.2f}s" if step.latency is not None else "aberto"
 
     lines = [

@@ -40,10 +40,11 @@ class WorkingMemory:
         self._messages.append(msg)
 
     def check_invariant(self) -> bool:
-        """Cada AIMessage com tool_calls é seguida IMEDIATAMENTE por um ToolMessage por id.
+        """Cada AIMessage com chamadas é seguida IMEDIATAMENTE por um ToolMessage por id.
 
-        Verifica presença e posição: o bloco logo após a chamada tem exatamente um
-        ToolMessage por tool_call, e nenhum ToolMessage aparece fora desse bloco.
+        Conta as chamadas válidas e as malformadas (invalid_tool_calls), que também são
+        reenviadas à API. Verifica presença e posição: o bloco logo após a chamada tem
+        exatamente um ToolMessage por chamada, e nenhum ToolMessage aparece fora dele.
         Ids None (o loop gera um uuid) casam por posição.
         """
         msgs = self._messages
@@ -53,8 +54,8 @@ class WorkingMemory:
             i += 1
             if isinstance(msg, ToolMessage):
                 return False  # resultado solto, fora do bloco da sua chamada
-            if isinstance(msg, AIMessage) and msg.tool_calls:
-                calls = msg.tool_calls
+            if isinstance(msg, AIMessage) and (msg.tool_calls or msg.invalid_tool_calls):
+                calls = [*msg.tool_calls, *msg.invalid_tool_calls]
                 block = msgs[i : i + len(calls)]
                 if len(block) < len(calls) or not all(isinstance(m, ToolMessage) for m in block):
                     return False

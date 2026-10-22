@@ -2,7 +2,14 @@
 
 import pytest
 
-from workshop_agentes.tracing.report import APPROXIMATION_NOTE, format_report, totals, usage_of
+from workshop_agentes.tracing.report import (
+    APPROXIMATION_NOTE,
+    FAILED_ATTEMPTS_NOTE,
+    attempts_of,
+    format_report,
+    totals,
+    usage_of,
+)
 from workshop_agentes.tracing.tracer import Span, Tracer
 
 
@@ -107,6 +114,28 @@ def test_report_shows_retries():
     with tracer.span("run", "agent"), tracer.span("step", "step_0"), tracer.span("llm_call", "model") as s:
         s.attrs.update(attempts=2, retries=["RateLimitError OTPM (espera 2.3s)"])
     assert "  retentado: RateLimitError OTPM (espera 2.3s)" in format_report(tracer.spans)
+
+
+def test_failed_call_counts_its_real_attempts():
+    tracer = Tracer()
+    with pytest.raises(RuntimeError):
+        with tracer.span("run", "agent"), tracer.span("step", "step_0"), tracer.span("llm_call", "model") as s:
+            s.attrs["retries"] = ["RateLimitError OTPM (espera 1.0s)", "RateLimitError OTPM (espera 2.0s)"]
+            raise RuntimeError("x")
+    llm_span = next(s for s in tracer.spans if s.kind == "llm_call")
+    assert attempts_of(llm_span) == 3  # 2 retries + a última, que falhou (antes aparecia 0)
+    report = format_report(tracer.spans)
+    assert "tentativas=3" in report and FAILED_ATTEMPTS_NOTE in report
+
+
+def test_report_shows_stop_reason():
+    tracer = Tracer()
+    with tracer.span("run", "agent") as run, tracer.span("step", "step_0"), tracer.span("llm_call", "model") as s:
+        s.attrs.update(attempts=1, finish_reason="stop")
+        run.attrs.update(reason="no_tool_call", finish_reason="stop")
+    report = format_report(tracer.spans)
+    assert "Motivo de parada: no_tool_call | finish_reason da última resposta: stop" in report
+    assert FAILED_ATTEMPTS_NOTE not in report  # sem falhas, sem a nota
 
 
 def test_report_shows_errors():

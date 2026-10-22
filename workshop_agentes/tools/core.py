@@ -1,5 +1,7 @@
-"""Ferramentas básicas: update_plan (raciocínio explícito, D4) e finish (terminal, D5).
+"""Ferramentas básicas: update_plan (raciocínio explícito, D4) e finish (terminal opcional, D5).
 
+O agente padrão termina com a resposta em texto; finish continua disponível para quem
+quiser uma ferramenta terminal: registry.register(finish, terminal=True).
 Descrições em inglês: são lidas pelo modelo.
 """
 

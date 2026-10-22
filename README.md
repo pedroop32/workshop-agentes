@@ -7,9 +7,10 @@ raciocina em passos, mantendo o contexto até entregar o resultado:
 
 - **modelo** (Groq via `langchain-groq`), que só *pede* as chamadas de ferramenta; quem executa é o nosso código;
 - **memória de trabalho**: a API é *stateless*, então o histórico completo é reenviado a cada passo;
-- **registry de ferramentas**: `update_plan` (raciocínio explícito) e `finish` (ferramenta terminal);
+- **registry de ferramentas**: `update_plan` (raciocínio explícito); a resposta final vem em texto (`finish`, uma
+  ferramenta terminal, é opcional);
 - **loop manual** de ferramentas, sem agentes prontos, para enxergar cada passo;
-- **tracing** próprio: tokens, latência, `finish_reason` e plano por passo.
+- **tracing** próprio: tokens, latência, `finish_reason`, tentativas retentadas, plano por passo e motivo de parada.
 
 [![Abrir no Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pedroop32/workshop-agentes/blob/main/workshop.ipynb)
 
@@ -22,7 +23,7 @@ workshop_agentes/
   agent/memory.py     WorkingMemory (histórico + invariante chamada -> resultado)
   agent/loop.py       Agent e AgentResult (o loop)
   tools/registry.py   ToolRegistry (executa ferramentas sem nunca levantar exceção)
-  tools/core.py       update_plan e finish
+  tools/core.py       update_plan e finish (terminal opcional)
   tracing/tracer.py   Span e Tracer
   tracing/report.py   relatório em texto
 tests/                testes offline (pytest) com modelo falso
@@ -65,7 +66,7 @@ from workshop_agentes.agent.config import DEFAULT_MODEL, AgentConfig, get_secret
 from workshop_agentes.agent.loop import Agent
 from workshop_agentes.agent.memory import WorkingMemory
 from workshop_agentes.llm import build_llm
-from workshop_agentes.tools.core import finish, update_plan
+from workshop_agentes.tools.core import update_plan
 from workshop_agentes.tools.registry import ToolRegistry
 from workshop_agentes.tracing.report import format_report
 from workshop_agentes.tracing.tracer import Tracer
@@ -73,12 +74,11 @@ from workshop_agentes.tracing.tracer import Tracer
 config = AgentConfig()
 llm = build_llm(get_secret("GROQ_MODEL", DEFAULT_MODEL), get_secret("GROQ_API_KEY"), config.temperature)
 registry = ToolRegistry()
-registry.register(update_plan)
-registry.register(finish, terminal=True)
+registry.register(update_plan)  # resposta final em texto; finish é opcional
 agent = Agent(llm, registry, WorkingMemory(config.system_prompt), Tracer(), config)
 
 result = agent.run("Compare lista encadeada e array dinâmico para implementar uma fila e conclua qual usar.")
-print(result.reason, result.answer)
+print(result.reason, result.finish_reason, result.answer)
 print(format_report(result.spans))
 ```
 
@@ -98,6 +98,10 @@ Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
   `openai/gpt-oss-120b` falhou nessa tarefa (erro 400 `tool_use_failed` ao chamar `finish` com uma resposta longa em
   Markdown). Se aparecer "modelo não encontrado", o notebook lista os modelos ativos para a sua chave.
 - **Temperatura:** por padrão não é passada, e vale o padrão do `ChatGroq` (0.7).
+- **Como o agente termina:** quando o modelo responde em texto, sem pedir ferramenta (`no_tool_call`), como no padrão da
+  documentação do Groq; `length` indica que essa resposta foi cortada pelo limite de tokens. Antes a resposta ia dentro
+  da ferramenta `finish`, e respostas longas em Markdown dentro do JSON causaram o `tool_use_failed` do gpt-oss e os
+  cortes abaixo; `finish` continua disponível como ferramenta terminal opcional.
 - **Tamanho da resposta:** `build_llm` sempre envia `max_tokens=8192`. Sem limite ou com 2048, o Groq cortou a resposta
   dentro do `finish` em ~1000 caracteres, sem avisar (o `finish_reason` continuou `tool_calls`); com 8192 ela veio
   completa.

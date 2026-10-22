@@ -1,6 +1,8 @@
 """Loop do agente: chama o modelo, executa as ferramentas pedidas e repete (D1).
 
-O loop não conhece "finish": termina quando uma ferramenta terminal dá certo (D5).
+Termina quando o modelo responde só em texto (a resposta final, como no padrão da
+documentação do Groq) ou quando uma ferramenta terminal dá certo (D5). O loop não
+conhece nenhuma ferramenta pelo nome.
 """
 
 import json
@@ -25,8 +27,15 @@ MALFORMED_CALL_ERROR = {
 class AgentResult:
     """Resultado de um run.
 
-    reason: "finish" | "no_tool_call" | "max_steps" | "error".
+    reason, por que o run parou:
+      "no_tool_call"  o modelo respondeu só em texto (a resposta final);
+      "length"        a resposta em texto foi cortada pelo limite de tokens (answer incompleta);
+      "finish"        uma ferramenta terminal deu certo;
+      "max_steps"     acabaram os passos sem resposta final;
+      "error"         a chamada ao modelo falhou.
     error: só o tipo da exceção (nunca a mensagem, que poderia vazar dados).
+    finish_reason: o motivo informado pelo provedor na última resposta recebida
+      ("stop", "tool_calls", "length"...).
     """
 
     answer: str | None
@@ -35,6 +44,7 @@ class AgentResult:
     spans: list[Span]
     messages: list[BaseMessage]
     error: str | None = None
+    finish_reason: str | None = None
 
 
 class Agent:
@@ -55,16 +65,16 @@ class Agent:
         self.cfg = config
 
     def run(self, task: str, section: str | None = None) -> AgentResult:
-        """Executa a tarefa até uma ferramenta terminal, resposta só em texto, erro ou max_steps.
+        """Executa a tarefa até a resposta em texto, uma ferramenta terminal, erro ou max_steps.
 
         Reinicia memória e tracer a cada chamada; o AgentResult anterior fica intacto.
-        section (opcional) vai para attrs do span "run".
+        section (opcional) vai para attrs do span "run", junto com o motivo de parada.
         """
         self.memory.reset()
         self.tracer.reset()
         self.memory.add_user(task)
-        answer, reason, error, steps = None, "max_steps", None, 0
-        with self.tracer.span("run", "agent", section=section):
+        answer, reason, error, steps, finish_reason = None, "max_steps", None, 0, None
+        with self.tracer.span("run", "agent", section=section) as run_span:
             for step in range(self.cfg.max_steps):
                 steps = step + 1
                 stop = False
@@ -80,33 +90,35 @@ class Agent:
                             )
                             s.attrs["attempts"] = attempts
                             s.attrs["usage"] = ai.usage_metadata or {}
-                            s.attrs["finish_reason"] = ai.response_metadata.get("finish_reason")
+                            finish_reason = s.attrs["finish_reason"] = ai.response_metadata.get("finish_reason")
                     except Exception as exc:  # o span já fechou com attrs["error"]
                         answer, reason, error, stop = None, "error", type(exc).__name__, True
                         if self.cfg.verbose:
                             print(f"[erro na chamada ao modelo: {error}]")
                     else:
                         self.memory.add_model(ai)
-                        if ai.tool_calls:
+                        if ai.tool_calls or ai.invalid_tool_calls:
                             terminal_out = self._run_tool_calls(ai)
                             if terminal_out is not None:
                                 answer = terminal_out.get("answer", json.dumps(terminal_out, ensure_ascii=False))
                                 reason, stop = "finish", True
-                        elif _is_malformed(ai):
-                            # Erro vira observação para o modelo, não exceção (6.1).
-                            self.memory.add_user(json.dumps(MALFORMED_CALL_ERROR))
                         else:
-                            answer, reason, stop = text_of(ai.content), "no_tool_call", True
+                            # Só texto: é a resposta final; "length" = o provedor a cortou no limite.
+                            answer, stop = text_of(ai.content), True
+                            reason = "length" if finish_reason == "length" else "no_tool_call"
                 if stop:
                     break
+            run_span.attrs.update(reason=reason, finish_reason=finish_reason)
         # Montado só depois de fechar todos os spans.
-        return AgentResult(answer, steps, reason, self.tracer.spans, self.memory.messages, error)
+        return AgentResult(answer, steps, reason, self.tracer.spans, self.memory.messages, error, finish_reason)
 
     def _run_tool_calls(self, ai: AIMessage) -> dict | None:
-        """Executa TODAS as chamadas da resposta e devolve a saída da terminal bem-sucedida, se houver.
+        """Responde TODAS as chamadas da resposta e devolve a saída da terminal bem-sucedida, se houver.
 
-        Cada chamada recebe seu ToolMessage antes de o loop poder encerrar.
-        Erro de ferramenta, inclusive da terminal, volta ao modelo como observação.
+        Cada chamada recebe seu ToolMessage antes de o loop poder encerrar, inclusive as
+        malformadas (invalid_tool_calls): o ChatGroq as reenvia como tool_calls e a API
+        espera uma resposta por id. Erro de ferramenta, inclusive da terminal, volta ao
+        modelo como observação (6.1).
         """
         terminal_out = None
         for call in ai.tool_calls:
@@ -123,12 +135,13 @@ class Agent:
                 print(f"→ {args['external']}")
             if self.registry.is_terminal(name) and "error" not in out:
                 terminal_out = out
+        for call in ai.invalid_tool_calls:  # argumentos ilegíveis: nada é executado
+            name = call.get("name") or "?"
+            with self.tracer.span("tool_call", name) as s:
+                s.attrs.update(args=call.get("args"), error="MalformedArguments")
+            self.memory.add_tool_result(
+                ToolMessage(
+                    content=json.dumps(MALFORMED_CALL_ERROR), tool_call_id=call.get("id") or str(uuid4()), name=name
+                )
+            )
         return terminal_out
-
-
-def _is_malformed(ai: AIMessage) -> bool:
-    """Resposta sem tool_calls válidas porque os argumentos não puderam ser lidos.
-
-    O 400 de chamada malformada do Groq é retentado em invoke_with_retry.
-    """
-    return bool(ai.invalid_tool_calls)
