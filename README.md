@@ -5,7 +5,7 @@ Material do workshop **"Do Chatbot ao Agente: Construindo Sistemas de IA com Fer
 Um projeto mínimo e modular que mostra a evolução de uma aplicação com LLM para um **agente** que usa ferramentas e
 raciocina em passos, mantendo o contexto até entregar o resultado:
 
-- **modelo** (Gemini via `langchain-google-genai`), que só *pede* as chamadas de ferramenta; quem executa é o nosso código;
+- **modelo** (Groq via `langchain-groq`), que só *pede* as chamadas de ferramenta; quem executa é o nosso código;
 - **memória de trabalho**: a API é *stateless*, então o histórico completo é reenviado a cada passo;
 - **registry de ferramentas**: `update_plan` (raciocínio explícito) e `finish` (ferramenta terminal);
 - **loop manual** de ferramentas, sem agentes prontos, para enxergar cada passo;
@@ -17,7 +17,7 @@ raciocina em passos, mantendo o contexto até entregar o resultado:
 
 ```
 workshop_agentes/
-  llm.py              build_llm, invoke_with_retry (único ponto de retry), text_of, list_generate_models
+  llm.py              build_llm, invoke_with_retry (único ponto de retry), text_of, list_models
   agent/config.py     DEFAULT_MODEL, get_secret, AgentConfig
   agent/memory.py     WorkingMemory (histórico + invariante chamada -> resultado)
   agent/loop.py       Agent e AgentResult (o loop)
@@ -29,19 +29,19 @@ tests/                testes offline (pytest) com modelo falso
 workshop.ipynb        notebook do workshop (Colab)
 ```
 
-## Chave da API: uma por aluno, de um projeto próprio
+## Chave da API: uma conta Groq por aluno
 
-1. Crie a sua chave no [Google AI Studio](https://aistudio.google.com/apikey) (plano gratuito).
-2. **Cada aluno usa a própria chave, criada num projeto próprio.** Os limites do plano gratuito valem **por projeto**,
-   não por chave: chaves do mesmo projeto dividem a cota. A cota diária renova à meia-noite do horário do Pacífico.
-   Os limites atuais aparecem no AI Studio.
+1. Crie uma conta e a sua chave no [console do Groq](https://console.groq.com/keys) (plano gratuito).
+2. **Cada aluno usa a própria conta.** Os limites valem **por organização**, não por chave: chaves da mesma
+   organização dividem a cota. Os limites da sua conta aparecem na página *Limits* do console
+   (referência: [rate limits](https://console.groq.com/docs/rate-limits)).
 3. **Nunca** cole a chave numa célula, num arquivo versionado ou numa mensagem.
 
 ## Rodando no Colab
 
 1. Abra o notebook pelo botão acima.
-2. No painel **Secrets** (ícone de chave 🔑 na barra lateral), crie o secret `GEMINI_API_KEY` com a sua chave.
-   Opcional: `GEMINI_MODEL` para trocar o modelo padrão.
+2. No painel **Secrets** (ícone de chave 🔑 na barra lateral), crie o secret `GROQ_API_KEY` com a sua chave.
+   Opcional: `GROQ_MODEL` para trocar o modelo padrão.
 3. **Ative a chave "Acesso ao notebook"** desse secret. Sem isso o notebook não consegue ler a chave.
 4. Rode as células 1 a 5 em ordem.
 
@@ -55,7 +55,7 @@ Requer Python 3.10+.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
-cp .env.example .env      # preencha GEMINI_API_KEY (o .env não é versionado)
+cp .env.example .env      # preencha GROQ_API_KEY (o .env não é versionado)
 ```
 
 Exemplo mínimo (o mesmo que o notebook faz):
@@ -71,7 +71,7 @@ from workshop_agentes.tracing.report import format_report
 from workshop_agentes.tracing.tracer import Tracer
 
 config = AgentConfig()
-llm = build_llm(get_secret("GEMINI_MODEL", DEFAULT_MODEL), get_secret("GEMINI_API_KEY"), config.temperature)
+llm = build_llm(get_secret("GROQ_MODEL", DEFAULT_MODEL), get_secret("GROQ_API_KEY"), config.temperature)
 registry = ToolRegistry()
 registry.register(update_plan)
 registry.register(finish, terminal=True)
@@ -92,10 +92,16 @@ Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
 
 ## Notas
 
-- **Modelo padrão:** `DEFAULT_MODEL` em `workshop_agentes/agent/config.py` (família Flash, plano gratuito). O secret ou
-  variável `GEMINI_MODEL` tem prioridade. Se aparecer "modelo não encontrado", o notebook lista os modelos disponíveis
-  para a sua chave.
-- **Temperatura:** por padrão não é enviada. Para o Gemini 3 a documentação recomenda manter o valor padrão do modelo.
-- **Plano gratuito:** cada passo do agente é uma chamada à API (`max_steps=8` por padrão). Erros 429 por minuto e 5xx
-  são retentados com backoff respeitando o tempo sugerido pela API; cota diária esgotada falha na hora com
-  `DailyQuotaError` (a detecção da cota diária ainda será confirmada contra a API real).
+- **Modelo padrão:** `openai/gpt-oss-120b` (`DEFAULT_MODEL` em `workshop_agentes/agent/config.py`). O secret ou variável
+  `GROQ_MODEL` tem prioridade. Esse modelo faz **uma chamada de ferramenta por resposta** (sem chamadas paralelas), então
+  `update_plan` e `finish` vêm em passos separados; `llama-3.3-70b-versatile` aceita chamadas paralelas. Se aparecer
+  "modelo não encontrado", o notebook lista os modelos ativos para a sua chave.
+- **Temperatura:** por padrão não é passada, e vale o padrão do `ChatGroq` (0.7).
+- **Limites do plano gratuito:** cada passo do agente é uma chamada à API (`max_steps=8` por padrão) e reenvia o histórico
+  inteiro, então os tokens de entrada crescem a cada passo; o limite de **tokens por minuto** é o que costuma estourar
+  primeiro.
+- **Retry com limite:** 429 por minuto, 5xx, falha de conexão e chamada de ferramenta malformada são retentados com
+  backoff, no máximo **3 tentativas** por chamada e **30 s** de espera cada (pior caso ≈ 1 min por chamada, mais o
+  timeout de 30 s por requisição). Se a API pedir uma espera maior que 30 s, a chamada falha na hora em vez de travar o
+  notebook. Limite diário (RPD/TPD) esgotado falha na hora com `DailyQuotaError` (a detecção ainda será confirmada contra
+  a API real).
