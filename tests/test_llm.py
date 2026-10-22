@@ -127,6 +127,13 @@ def test_is_retryable_classification():
     assert not llm._is_retryable(ValueError("bug local"))
 
 
+def test_rate_limit_window_names_the_limit():
+    assert llm.rate_limit_window(rate_limit_error()) == "RPM"
+    assert llm.rate_limit_window(rate_limit_error(per_day=True)) == "RPD"
+    assert llm.rate_limit_window(server_error()) is None
+    assert llm.rate_limit_window(ValueError("bug local")) is None
+
+
 def test_suggested_delay_reads_retry_after_header():
     assert llm._suggested_delay(rate_limit_error(retry_after="2.5")) == 2.5
     assert llm._suggested_delay(rate_limit_error(retry_after=None)) is None

@@ -5,6 +5,7 @@ apenas de langchain-core.
 """
 
 import random
+import re
 import time
 from typing import Any, Callable, Sequence
 
@@ -106,15 +107,21 @@ def _is_tool_use_failed(exc: BaseException) -> bool:
     return error.get("code") == "tool_use_failed" or "failed_generation" in error
 
 
-def _is_daily_quota(exc: BaseException) -> bool:
-    """429 de limite diário (RPD ou TPD)?
+def rate_limit_window(exc: BaseException) -> str | None:
+    """Limite estourado num 429: "RPM", "TPM", "RPD" ou "TPD" (None se não for 429).
 
     A mensagem real nomeia a janela, ex.: "on requests per minute (RPM)" (visto em
-    2026-10-21). [A VERIFICAR: "per day" no 429 diário, ainda não observado]
+    2026-10-21). Seguro de exibir: a mensagem inteira tem o id da organização.
     """
     if not isinstance(exc, groq.RateLimitError):
-        return False
-    return "per day" in str(_error_body(exc).get("message", exc)).lower()
+        return None
+    match = re.search(r"\(([RT]P[MD])\)", str(_error_body(exc).get("message", exc)))
+    return match.group(1) if match else None
+
+
+def _is_daily_quota(exc: BaseException) -> bool:
+    """429 de limite diário (RPD ou TPD)? [A VERIFICAR: 429 diário ainda não observado]"""
+    return rate_limit_window(exc) in ("RPD", "TPD")
 
 
 def _suggested_delay(exc: BaseException) -> float | None:
