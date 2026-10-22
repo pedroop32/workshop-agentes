@@ -5,11 +5,12 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-# Modelo de produção do Groq com tool use e cache de prompt (docs, 2026-10-21).
-# Não faz chamadas paralelas: update_plan e finish vêm em passos separados.
-# Alternativa com chamadas paralelas: "llama-3.3-70b-versatile".
+# Verificado na API real (2026-10-21): termina a tarefa do workshop em 2 passos.
+# É Preview no Groq (pode ser descontinuado com pouco aviso). Alternativa de
+# produção: "openai/gpt-oss-120b", que falhou na mesma tarefa (400 tool_use_failed
+# ao pôr a resposta longa em Markdown no finish).
 # O secret/variável GROQ_MODEL tem prioridade sobre este valor.
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = "qwen/qwen3.8-27b"
 
 # Vale para modelos com uma chamada por resposta (sem exigir update_plan "em toda resposta").
 SYSTEM_PROMPT = (

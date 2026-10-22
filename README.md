@@ -92,10 +92,11 @@ Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
 
 ## Notas
 
-- **Modelo padrão:** `openai/gpt-oss-120b` (`DEFAULT_MODEL` em `workshop_agentes/agent/config.py`). O secret ou variável
-  `GROQ_MODEL` tem prioridade. Esse modelo faz **uma chamada de ferramenta por resposta** (sem chamadas paralelas), então
-  `update_plan` e `finish` vêm em passos separados; `llama-3.3-70b-versatile` aceita chamadas paralelas. Se aparecer
-  "modelo não encontrado", o notebook lista os modelos ativos para a sua chave.
+- **Modelo padrão:** `qwen/qwen3.8-27b` (`DEFAULT_MODEL` em `workshop_agentes/agent/config.py`), testado contra a API
+  real na tarefa do notebook. É um modelo *Preview* do Groq (pode ser descontinuado com pouco aviso); nesse caso, defina
+  `GROQ_MODEL` com outro modelo que aceite ferramentas. O secret ou variável `GROQ_MODEL` tem prioridade. Atenção:
+  `openai/gpt-oss-120b` falhou nessa tarefa (erro 400 `tool_use_failed` ao chamar `finish` com uma resposta longa em
+  Markdown). Se aparecer "modelo não encontrado", o notebook lista os modelos ativos para a sua chave.
 - **Temperatura:** por padrão não é passada, e vale o padrão do `ChatGroq` (0.7).
 - **Limites do plano gratuito:** cada passo do agente é uma chamada à API (`max_steps=8` por padrão) e reenvia o histórico
   inteiro, então os tokens de entrada crescem a cada passo; o limite de **tokens por minuto** é o que costuma estourar

@@ -23,5 +23,5 @@ def test_agent_config_defaults():
     assert "update_plan" in SYSTEM_PROMPT and "finish" in SYSTEM_PROMPT
 
 
-def test_default_model_is_groq_gpt_oss():
-    assert DEFAULT_MODEL == "openai/gpt-oss-120b"
+def test_default_model_is_groq_qwen():
+    assert DEFAULT_MODEL == "qwen/qwen3.8-27b"

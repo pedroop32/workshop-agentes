@@ -110,11 +110,15 @@ def _status_error(cls: type[groq.APIStatusError], code: int, error: dict, header
 
 
 def rate_limit_error(per_day: bool = False, retry_after: str | None = "7") -> groq.RateLimitError:
-    """429 como o SDK levanta. [A VERIFICAR na API real: texto da mensagem]"""
-    window = "requests per day (RPD)" if per_day else "tokens per minute (TPM)"
+    """429 como o SDK levanta, no formato visto na API real (2026-10-21).
+
+    [A VERIFICAR: texto do 429 diário, ainda não observado]
+    """
+    window = "requests per day (RPD)" if per_day else "requests per minute (RPM)"
     error = {
-        "message": f"Rate limit reached for model `fake` on {window}: Limit 8000. Please try again in 7s.",
-        "type": "tokens",
+        "message": f"Rate limit reached for model `fake` in organization `org_fake` service tier `on_demand` "
+        f"on {window}: Limit 3, Used 3, Requested 1. Please try again in 7s.",
+        "type": "requests",
         "code": "rate_limit_exceeded",
     }
     headers = {"retry-after": retry_after} if retry_after is not None else None
@@ -132,9 +136,9 @@ def bad_request_error() -> groq.BadRequestError:
 
 
 def tool_use_failed_error() -> groq.BadRequestError:
-    """400 de chamada de ferramenta malformada. [A VERIFICAR na API real: code e failed_generation]"""
+    """400 de chamada de ferramenta malformada, no formato visto na API real (2026-10-21)."""
     error = {
-        "message": "Failed to call a function. Please adjust your prompt.",
+        "message": "Failed to parse tool call arguments as JSON",
         "type": "invalid_request_error",
         "code": "tool_use_failed",
         "failed_generation": '{"name": "finish", "arguments": {"answer": }',

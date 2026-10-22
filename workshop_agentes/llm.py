@@ -98,7 +98,7 @@ def _error_body(exc: BaseException) -> dict:
 def _is_tool_use_failed(exc: BaseException) -> bool:
     """400 de chamada de ferramenta malformada? O Groq recomenda tentar de novo.
 
-    [A VERIFICAR na API real: code "tool_use_failed"; a doc só cita failed_generation]
+    Na API real (2026-10-21): code "tool_use_failed" e failed_generation no erro.
     """
     if not isinstance(exc, groq.BadRequestError):
         return False
@@ -107,7 +107,11 @@ def _is_tool_use_failed(exc: BaseException) -> bool:
 
 
 def _is_daily_quota(exc: BaseException) -> bool:
-    """429 de limite diário (RPD ou TPD)? [A VERIFICAR na API real: "per day" na mensagem]."""
+    """429 de limite diário (RPD ou TPD)?
+
+    A mensagem real nomeia a janela, ex.: "on requests per minute (RPM)" (visto em
+    2026-10-21). [A VERIFICAR: "per day" no 429 diário, ainda não observado]
+    """
     if not isinstance(exc, groq.RateLimitError):
         return False
     return "per day" in str(_error_body(exc).get("message", exc)).lower()
