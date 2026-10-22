@@ -20,7 +20,7 @@ class UpdatePlanArgs(BaseModel):
 
 @tool(args_schema=UpdatePlanArgs)
 def update_plan(previous_step: str, plan: str, next_step: str, external: str) -> dict:
-    """Record your reasoning before acting: findings so far, plan status and the next action."""
+    """Record your plan: findings so far, plan status and the next action. It does not act or fetch information."""
     return {"status": "ok"}
 
 

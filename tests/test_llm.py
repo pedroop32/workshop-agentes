@@ -44,21 +44,60 @@ def test_rate_limit_respects_suggested_delay():
     assert 7.0 <= sleep.delays[0] <= 8.0  # retry-after + jitter < base_delay
 
 
-def test_suggested_delay_above_max_fails_fast():
+def test_rate_limit_suggested_delay_above_budget_fails_fast():
     sleep = SleepRecorder()
-    original = rate_limit_error(retry_after="45")
+    original = rate_limit_error(retry_after="75")
     runnable = FlakyRunnable([original])
     with pytest.raises(groq.RateLimitError) as info:
-        invoke_with_retry(runnable, [], sleep=sleep, max_delay=30.0)
+        invoke_with_retry(runnable, [], sleep=sleep)
     assert info.value is original
     assert runnable.calls == 1
-    assert sleep.delays == []  # não espera 45 s
+    assert sleep.delays == []  # não espera 75 s
 
 
-def test_default_bounds_cap_total_wait():
+def test_rate_limit_waits_beyond_max_attempts_within_budget():
+    sleep = SleepRecorder()
+    otpm = [rate_limit_error(retry_after="5", window="output tokens per minute (OTPM)") for _ in range(4)]
+    runnable = FlakyRunnable(otpm)
+    _, attempts = invoke_with_retry(runnable, [], sleep=sleep)  # max_attempts=3 não vale para 429 por minuto
+    assert attempts == 5
+    assert all(delay >= 5.0 for delay in sleep.delays)  # nunca menos que o retry-after
+    assert sum(sleep.delays) <= llm.RATE_LIMIT_BUDGET
+
+
+def test_rate_limit_budget_caps_total_wait():
     sleep = SleepRecorder()
     runnable = FlakyRunnable([rate_limit_error(retry_after="30") for _ in range(5)])
     with pytest.raises(groq.RateLimitError):
+        invoke_with_retry(runnable, [], sleep=sleep)
+    assert runnable.calls == 2  # 30 s cabem no orçamento de 60 s; 30 s a mais, não
+    assert sum(sleep.delays) <= llm.RATE_LIMIT_BUDGET
+
+
+def test_rate_limit_backoff_grows_without_suggestion_and_stops():
+    sleep = SleepRecorder()
+    runnable = FlakyRunnable([rate_limit_error(retry_after=None) for _ in range(10)])
+    with pytest.raises(groq.RateLimitError):
+        invoke_with_retry(runnable, [], sleep=sleep, base_delay=1.0)
+    for delay, expected in zip(sleep.delays, [1.0, 2.0, 4.0, 8.0, 16.0], strict=True):
+        assert expected <= delay <= expected + 1.0
+    assert runnable.calls == 6  # a 6ª espera (32 s) já não cabe nos 60 s
+    assert sum(sleep.delays) <= llm.RATE_LIMIT_BUDGET
+
+
+def test_server_error_suggested_delay_above_max_fails_fast():
+    error = server_error()
+    error.response.headers["retry-after"] = "45"
+    runnable = FlakyRunnable([error])
+    with pytest.raises(groq.InternalServerError):
+        invoke_with_retry(runnable, [], sleep=SleepRecorder(), max_delay=30.0)
+    assert runnable.calls == 1  # fora do 429, max_delay continua valendo
+
+
+def test_other_errors_keep_max_attempts():
+    sleep = SleepRecorder()
+    runnable = FlakyRunnable([server_error() for _ in range(5)])
+    with pytest.raises(groq.InternalServerError):
         invoke_with_retry(runnable, [], sleep=sleep)
     assert runnable.calls == 3  # max_attempts padrão
     assert sum(sleep.delays) <= 2 * (30.0 + 1.0)  # pior caso documentado (~62 s)
@@ -141,7 +180,19 @@ def test_otpm_is_retried_not_daily():
 
 
 def test_error_label_is_short_and_safe():
-    assert llm.error_label(rate_limit_error(window="output tokens per minute (OTPM)")) == "RateLimitError OTPM"
+    otpm = rate_limit_error(window="output tokens per minute (OTPM)")
+    assert llm.error_label(otpm) == "RateLimitError OTPM: Limit 3, Used 3, Requested 1"
+    assert llm.rate_limit_usage(otpm) == "Limit 3, Used 3, Requested 1"
+    assert llm.rate_limit_usage(server_error()) is None
+
+
+def test_rate_limit_usage_keeps_the_numbers_that_exist():
+    partial = rate_limit_error()
+    partial.body["error"]["message"] = "Rate limit reached on output tokens per minute (OTPM): Limit 1000, Used 999."
+    assert llm.rate_limit_usage(partial) == "Limit 1000, Used 999"
+    partial.body["error"]["message"] = "Rate limit reached on output tokens per minute (OTPM). Try again in 2s."
+    assert llm.rate_limit_usage(partial) is None
+    assert llm.error_label(partial) == "RateLimitError OTPM"
     assert llm.error_label(tool_use_failed_error()) == "BadRequestError tool_use_failed"
     assert llm.error_label(server_error(503)) == "InternalServerError 503"
     assert llm.error_label(connection_error()) == "APITimeoutError"
@@ -221,3 +272,14 @@ def test_list_models_keeps_active_sorted(monkeypatch):
     monkeypatch.setattr(llm.groq, "Groq", lambda **kwargs: created.update(kwargs) or fake_client)
     assert list_models("chave-falsa") == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "sem-flag"]
     assert created["max_retries"] == 0 and created["timeout"] == llm.REQUEST_TIMEOUT  # mesma política do resto
+
+
+def test_list_models_keeps_only_tool_models_when_reported(monkeypatch):
+    models = [
+        SimpleNamespace(id="qwen/qwen3.8-27b", active=True, supported_features=["tools", "json_mode"]),
+        SimpleNamespace(id="allam-2-7b", active=True, supported_features=["json_mode"]),
+        SimpleNamespace(id="whisper-large-v3", active=True),  # áudio: sem o campo
+    ]
+    fake_client = SimpleNamespace(models=SimpleNamespace(list=lambda: SimpleNamespace(data=models)))
+    monkeypatch.setattr(llm.groq, "Groq", lambda **kwargs: fake_client)
+    assert list_models("chave-falsa") == ["qwen/qwen3.8-27b"]

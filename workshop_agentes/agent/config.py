@@ -15,9 +15,14 @@ DEFAULT_MODEL = "qwen/qwen3.8-27b"
 # A resposta final vem em texto puro, como no padrão da documentação do Groq: o loop termina
 # com reason "no_tool_call". Resposta longa fora do JSON de ferramenta evita o tool_use_failed
 # e os cortes vistos quando ela ia dentro do finish (2026-10-21).
+# 2026-10-22: o texto anterior ("Before acting, call update_plan" + "without calling any tool")
+# tratava o update_plan como passo obrigatório e como ferramenta proibida ao mesmo tempo, e o
+# modelo às vezes o pulava. Agora o prompt diz o que o loop força (AgentConfig.first_tool).
 SYSTEM_PROMPT = (
-    "Before acting, call `update_plan` with all required parameters (previous_step, plan, next_step, external). "
-    "When you have the final answer, reply to the User in plain text, without calling any tool."
+    "Your first response must call `update_plan` with all required parameters (previous_step, plan, next_step, external). "
+    "`update_plan` only records your plan: it does not act or fetch information. "
+    "When you have the final answer, reply to the User in plain text and call no tool in that response, "
+    "not even `update_plan`."
 )
 
 
@@ -52,10 +57,14 @@ class AgentConfig:
     """Parâmetros do agente.
 
     temperature=None usa o padrão do ChatGroq (0.7);
-    verbose=True imprime ao vivo a nota "external" de cada update_plan.
+    system_prompt: o padrão pressupõe update_plan registrado; com outras ferramentas, ajuste-o;
+    first_tool: ferramenta que a 1ª chamada ao modelo é obrigada a usar (tool_choice com o
+      nome); None deixa o modelo decidir desde o início;
+    verbose=True imprime ao vivo a nota "external" de cada chamada que a tenha (a do update_plan).
     """
 
     max_steps: int = 8
     temperature: float | None = None
     system_prompt: str = SYSTEM_PROMPT
+    first_tool: str | None = "update_plan"
     verbose: bool = True

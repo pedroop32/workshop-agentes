@@ -14,10 +14,15 @@ class ToolRegistry:
         self._terminal: set[str] = set()
 
     def register(self, tool: BaseTool, terminal: bool = False) -> None:
-        """Registra a ferramenta; terminal=True encerra o agente quando ela dá certo."""
+        """Registra a ferramenta; terminal=True encerra o agente quando ela dá certo.
+
+        Registrar de novo o mesmo nome substitui a ferramenta e a marca de terminal.
+        """
         self._tools[tool.name] = tool
         if terminal:
             self._terminal.add(tool.name)
+        else:
+            self._terminal.discard(tool.name)
 
     @property
     def tools(self) -> list[BaseTool]:

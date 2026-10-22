@@ -109,6 +109,34 @@ def test_report_has_steps_functions_totals_and_note():
     assert APPROXIMATION_NOTE in report
 
 
+def test_report_shows_forced_tool_and_plan_of_any_tool():
+    tracer = Tracer()
+    with tracer.span("run", "agent"), tracer.span("step", "step_0"):
+        with tracer.span("llm_call", "model") as s:
+            s.attrs.update(attempts=1, forced_tool="update_plan")
+        with tracer.span("tool_call", "outro_planejador") as s:  # o relatório não testa o nome
+            s.attrs["args"] = {"plan": "só o plano"}
+        with tracer.span("tool_call", "search") as s:
+            s.attrs["args"] = {"query": "fila"}
+    report = format_report(tracer.spans)
+    assert "  tool_choice forçado: update_plan" in report
+    assert "  plan: só o plano" in report and "  previous_step: -" in report
+    assert report.count("  plan:") == 1  # search não tem campos do plano
+
+
+def test_report_flags_text_with_calls_empty_reply_and_tool_errors():
+    tracer = Tracer()
+    with tracer.span("run", "agent"), tracer.span("step", "step_0"):
+        with tracer.span("llm_call", "model") as s:
+            s.attrs.update(attempts=1, text_chars=23, empty_reply=True)
+        with tracer.span("tool_call", "update_plan") as s:
+            s.attrs.update(args={"plan": "x"}, error="ValidationError")
+    report = format_report(tracer.spans)
+    assert "  texto junto com chamada (não é a resposta): 23 caracteres" in report
+    assert "  resposta vazia: o agente pediu a resposta de novo" in report
+    assert "  erro em update_plan: ValidationError" in report
+
+
 def test_report_shows_retries():
     tracer = Tracer()
     with tracer.span("run", "agent"), tracer.span("step", "step_0"), tracer.span("llm_call", "model") as s:

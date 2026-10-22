@@ -75,6 +75,13 @@ def test_is_terminal(registry):
     assert not registry.is_terminal("nao_existe")
 
 
+def test_registering_again_replaces_the_terminal_flag(registry):
+    registry.register(finish)  # de novo, sem terminal=True
+    assert not registry.is_terminal("finish")
+    registry.register(finish, terminal=True)
+    assert registry.is_terminal("finish")
+
+
 def test_tools_in_registration_order(registry):
     assert [t.name for t in registry.tools] == ["update_plan", "finish", "boom", "double"]
 

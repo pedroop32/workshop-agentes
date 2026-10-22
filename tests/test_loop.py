@@ -7,8 +7,9 @@ import json
 from functools import partial
 
 import pytest
-from fakes import PLAN_ARGS, ScriptedChatModel, ai, bad_request_error, call, tool_use_failed_error
+from fakes import PLAN_ARGS, ScriptedChatModel, ai, bad_request_error, call, rate_limit_error, tool_use_failed_error
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool
 
 from workshop_agentes import llm
 from workshop_agentes.agent import loop
@@ -72,7 +73,33 @@ def test_update_plan_then_finish():
     assert result.answer == "Use array dinâmico."
     assert result.steps == 2
     assert result.error is None
-    assert model.bind_calls == 1  # bind_tools uma vez só
+    assert model.bind_calls == 2  # bind_tools uma vez por modo: livre e forçado (1ª chamada)
+
+
+def test_first_call_is_forced_to_use_first_tool():
+    agent, model = make_agent(
+        [ai(call("update_plan", PLAN_ARGS), finish_reason="tool_calls"), ai(content="Resposta final.")],
+        with_finish=False,
+    )
+    result = agent.run("tarefa")
+    assert result.reason == "no_tool_call" and result.steps == 2
+    assert model.tool_choices == ["update_plan", None]  # só a 1ª chamada é obrigada; depois o modelo decide
+    llm_spans = [s for s in result.spans if s.kind == "llm_call"]
+    assert [s.attrs.get("forced_tool") for s in llm_spans] == ["update_plan", None]
+
+
+def test_first_tool_none_lets_the_model_decide():
+    agent, model = make_agent([ai(content="Resposta direta.")], with_finish=False, first_tool=None)
+    result = agent.run("tarefa")
+    assert result.reason == "no_tool_call" and result.steps == 1
+    assert model.bind_calls == 1 and model.tool_choices == [None]
+    assert "forced_tool" not in next(s for s in result.spans if s.kind == "llm_call").attrs
+
+
+def test_first_tool_must_be_registered():
+    cfg = AgentConfig(verbose=False)
+    with pytest.raises(ValueError, match="update_plan"):
+        Agent(ScriptedChatModel(), ToolRegistry(), WorkingMemory(cfg.system_prompt), Tracer(), cfg)
 
 
 def test_parallel_calls_one_tool_message_per_id():
@@ -149,11 +176,69 @@ def test_model_failure_returns_error_without_raising():
     agent, _ = make_agent([bad_request_error()])
     result = agent.run("tarefa")
     assert result.reason == "error"
-    assert result.error == "BadRequestError"  # só o tipo, nunca a mensagem
+    assert result.error == "BadRequestError 400"  # rótulo seguro (o mesmo do span), nunca a mensagem
     assert result.answer is None
     assert all(s.t_end is not None for s in result.spans)
     llm_span = next(s for s in result.spans if s.kind == "llm_call")
-    assert llm_span.attrs["error"] == "BadRequestError"
+    assert llm_span.attrs["error"] == "BadRequestError 400"  # rótulo seguro: tipo + status
+
+
+def test_tool_error_is_traced_and_rejected_external_is_flagged(capsys):
+    missing_plan = {k: v for k, v in PLAN_ARGS.items() if k != "plan"}
+    agent, model = make_agent(
+        [ai(call("update_plan", missing_plan)), ai(call("nao_existe")), ai(content="Resposta final.")],
+        with_finish=False,
+        verbose=True,
+    )
+    result = agent.run("tarefa")
+    assert result.reason == "no_tool_call"
+    errors = [s.attrs.get("error") for s in result.spans if s.kind == "tool_call"]
+    assert errors == ["ValidationError", "Unknown tool"]  # só o tipo no tracing
+    assert "error" in tool_outputs(model.received[1])[0]  # o modelo recebe o erro completo como observação
+    out = capsys.readouterr().out
+    assert f"→ {PLAN_ARGS['external']} [chamada rejeitada: ValidationError]" in out  # o raciocínio continua visível
+
+
+def test_empty_reply_is_not_a_final_answer():
+    agent, model = make_agent(
+        [ai(call("update_plan", PLAN_ARGS)), ai(content="  "), ai(content="Resposta final.")], with_finish=False
+    )
+    result = agent.run("tarefa")
+    assert result.reason == "no_tool_call" and result.answer == "Resposta final." and result.steps == 3
+    nudge = model.received[2][-1]
+    assert isinstance(nudge, HumanMessage) and nudge.content == loop.EMPTY_REPLY_NUDGE
+    assert [s.attrs.get("empty_reply") for s in result.spans if s.kind == "llm_call"] == [None, True, None]
+    assert agent.memory.check_invariant()
+
+
+def test_empty_reply_cut_by_token_limit_still_ends_with_length():
+    agent, _ = make_agent([ai(content="", finish_reason="length")], with_finish=False, first_tool=None)
+    result = agent.run("tarefa")
+    assert result.reason == "length" and result.answer == ""  # cortada no limite: não pede de novo
+
+
+def test_text_alongside_tool_calls_is_traced_not_used_as_answer():
+    agent, _ = make_agent(
+        [ai(call("update_plan", PLAN_ARGS), content="Já respondo: use array."), ai(content="Resposta final.")],
+        with_finish=False,
+    )
+    result = agent.run("tarefa")
+    assert result.answer == "Resposta final."
+    first_llm = next(s for s in result.spans if s.kind == "llm_call")
+    assert first_llm.attrs["text_chars"] == len("Já respondo: use array.")
+
+
+def test_rate_limit_retry_is_traced_with_numbers_and_announced(monkeypatch, capsys):
+    monkeypatch.setattr(loop, "invoke_with_retry", partial(llm.invoke_with_retry, sleep=lambda seconds: None))
+    otpm = rate_limit_error(retry_after="5", window="output tokens per minute (OTPM)")
+    agent, _ = make_agent([otpm, ai(content="Resposta final.")], with_finish=False, first_tool=None, verbose=True)
+    result = agent.run("tarefa")
+    assert result.reason == "no_tool_call"
+    retry = next(s for s in result.spans if s.kind == "llm_call").attrs["retries"][0]
+    assert retry.startswith("RateLimitError OTPM: Limit 3, Used 3, Requested 1 (espera ")
+    out = capsys.readouterr().out
+    assert "[retentando em " in out and "RateLimitError OTPM: Limit 3, Used 3, Requested 1]" in out
+    assert "org_fake" not in out + retry
 
 
 def test_retried_errors_are_traced_in_the_llm_span(monkeypatch):
@@ -216,6 +301,25 @@ def test_verbose_prints_external(capsys):
     )
     agent.run("tarefa")
     assert PLAN_ARGS["external"] in capsys.readouterr().out
+
+
+def test_verbose_prints_external_of_any_tool(capsys):
+    @tool
+    def search(query: str, external: str) -> dict:
+        """Busca falsa."""
+        return {"result": query}
+
+    model = ScriptedChatModel(script=[
+        ai(call("update_plan", PLAN_ARGS)),
+        ai(call("search", {"query": "fila", "external": "Vou buscar sobre filas."})),
+        ai(content="Resposta final."),
+    ])
+    registry = ToolRegistry()
+    registry.register(update_plan)
+    registry.register(search)
+    cfg = AgentConfig()  # verbose=True
+    Agent(model, registry, WorkingMemory(cfg.system_prompt), Tracer(), cfg).run("tarefa")
+    assert "→ Vou buscar sobre filas." in capsys.readouterr().out  # o loop não testa o nome da ferramenta
 
 
 BAD_CALL = {"name": "finish", "args": '{"answer": ', "id": "call_bad", "error": "JSON inválido", "type": "invalid_tool_call"}

@@ -28,7 +28,7 @@ class ScriptedChatModel(BaseChatModel):
     script: list[Any] = Field(default_factory=list)
     received: list[list[BaseMessage]] = Field(default_factory=list)
     bound_tools: list[Any] | None = None
-    tool_choice: Any = None
+    tool_choices: list[Any] = Field(default_factory=list)  # o tool_choice de cada chamada, em ordem
     bind_calls: int = 0
 
     @property
@@ -46,9 +46,20 @@ class ScriptedChatModel(BaseChatModel):
 
     def bind_tools(self, tools, *, tool_choice=None, **kwargs):
         self.bound_tools = list(tools)
-        self.tool_choice = tool_choice
         self.bind_calls += 1
-        return self
+        return BoundScripted(self, tool_choice)
+
+
+class BoundScripted:
+    """O que bind_tools devolve: repassa ao modelo e registra o tool_choice de cada chamada."""
+
+    def __init__(self, model: ScriptedChatModel, tool_choice: Any) -> None:
+        self.model = model
+        self.tool_choice = tool_choice
+
+    def invoke(self, messages):
+        self.model.tool_choices.append(self.tool_choice)
+        return self.model.invoke(messages)
 
 
 USAGE = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}

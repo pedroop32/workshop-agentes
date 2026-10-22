@@ -1,7 +1,7 @@
-"""Camada do modelo: o único módulo que conhece o provedor (Groq).
+"""Camada do modelo: o único módulo que importa o pacote do provedor (Groq).
 
-Trocar de provedor muda só este arquivo (D7). O resto do agente depende
-apenas de langchain-core.
+Trocar de provedor muda este arquivo (D7) e os valores de config.py (DEFAULT_MODEL e os
+nomes GROQ_* dos segredos). O resto do agente depende apenas de langchain-core.
 """
 
 import random
@@ -20,6 +20,10 @@ REQUEST_TIMEOUT = 30.0  # segundos por requisição (o padrão do SDK é 60)
 # veio cortada em ~1000 caracteres, sem aviso (finish_reason continuou "tool_calls");
 # com 4000 e 8192 veio completa (a de 8192 com 2901 caracteres). O máximo do modelo é 16384.
 MAX_OUTPUT_TOKENS = 8192
+# 429 por minuto (RPM, TPM, OTPM...): espera somada máxima por chamada. A cota se recompõe aos
+# poucos e volta inteira em ~1 min (API REAL 2026-10-22: "OTPM: Limit 1000, Used 253, Requested 816.
+# Please try again in 4.14s"; o Groq reserva uma estimativa da saída antes de gerar).
+RATE_LIMIT_BUDGET = 60.0
 
 
 class DailyQuotaError(RuntimeError):
@@ -55,21 +59,29 @@ def invoke_with_retry(
     *,
     base_delay: float = 1.0,
     max_delay: float = 30.0,
+    rate_limit_budget: float = RATE_LIMIT_BUDGET,
     sleep: Callable[[float], None] = time.sleep,
     on_retry: Callable[[BaseException, float], None] | None = None,
 ) -> tuple[AIMessage, int]:
     """Chama runnable.invoke(messages) com backoff exponencial + jitter, sempre limitado.
 
-    Retorna (resposta, tentativas). Usa o tempo sugerido pela API (retry-after)
-    quando houver; se ele passar de max_delay, levanta na hora em vez de esperar.
-    Espera máxima por chamada: (max_attempts - 1) * (max_delay + base_delay),
-    ~62 s no padrão. Erro não retentável (ex.: 400) ou a última falha são
-    levantados como vieram; limite diário esgotado vira DailyQuotaError na hora.
+    Retorna (resposta, tentativas). Dois limites:
+    - 429 por minuto: retenta enquanto a espera somada couber em rate_limit_budget (~1 min, o
+      tempo de a cota se recompor). Cada espera é o retry-after da API ou o backoff, o que for
+      maior; o backoff dobra a cada 429, então são no máximo ~6 tentativas. Se a próxima espera
+      não couber, levanta na hora em vez de travar.
+    - 5xx, falha de conexão e chamada malformada: até max_attempts falhas desse tipo, cada espera
+      até max_delay (~62 s somados no padrão).
+    Erro não retentável (ex.: 400) ou a última falha são levantados como vieram; limite diário
+    esgotado vira DailyQuotaError na hora.
     on_retry(exc, espera), se dado, é chamado antes de cada nova tentativa (tracing).
     """
     if max_attempts < 1:
         raise ValueError("max_attempts deve ser >= 1")
-    for attempt in range(1, max_attempts + 1):
+    attempt = rate_limited = other_failures = 0
+    waited = 0.0
+    while True:
+        attempt += 1
         try:
             return runnable.invoke(messages), attempt
         except Exception as exc:
@@ -78,14 +90,25 @@ def invoke_with_retry(
                     "Limite diário do Groq esgotado (RPD/TPD, vale para a organização inteira). "
                     "Confira a página Limits do console Groq e tente mais tarde."
                 ) from exc
-            if attempt == max_attempts or not _is_retryable(exc):
+            if not _is_retryable(exc):
                 raise
-            delay = _suggested_delay(exc)
-            if delay is None:
-                delay = min(max_delay, base_delay * 2 ** (attempt - 1))
-            elif delay > max_delay:
-                raise  # esperar tanto travaria a execução: falha rápido
-            delay += random.uniform(0, base_delay)  # jitter evita rajadas sincronizadas
+            suggested = _suggested_delay(exc)
+            jitter = random.uniform(0, base_delay)  # evita rajadas sincronizadas
+            if isinstance(exc, groq.RateLimitError):  # por minuto: o diário já saiu acima
+                rate_limited += 1
+                delay = max(suggested or 0.0, base_delay * 2 ** (rate_limited - 1)) + jitter
+                if waited + delay > rate_limit_budget:
+                    raise  # a cota não volta dentro do orçamento: falha em vez de travar
+            else:
+                other_failures += 1
+                if other_failures == max_attempts:
+                    raise
+                if suggested is None:
+                    suggested = min(max_delay, base_delay * 2 ** (other_failures - 1))
+                elif suggested > max_delay:
+                    raise  # esperar tanto travaria a execução: falha rápido
+                delay = suggested + jitter
+            waited += delay
             if on_retry is not None:
                 on_retry(exc, delay)
             sleep(delay)
@@ -136,10 +159,29 @@ def rate_limit_window(exc: BaseException) -> str | None:
     return match.group(1) if match else None
 
 
+def rate_limit_usage(exc: BaseException) -> str | None:
+    """Os números de um 429, ex.: "Limit 1000, Used 253, Requested 816" (None se não vier nenhum).
+
+    Cada número é lido separadamente: em 2026-10-22, 3 de 5 429 OTPM reais vieram sem o trecho
+    completo. Seguro de exibir: só números. Requested é a estimativa que o Groq reserva antes
+    de gerar, não o tamanho real da resposta.
+    """
+    if not isinstance(exc, groq.RateLimitError):
+        return None
+    message = str(_error_body(exc).get("message", exc))
+    found = [m.group(0) for key in ("Limit", "Used", "Requested") if (m := re.search(rf"\b{key} \d+", message))]
+    return ", ".join(found) or None
+
+
 def error_label(exc: BaseException) -> str:
-    """Rótulo curto e seguro de exibir: tipo + limite, código ou status (nunca a mensagem)."""
+    """Rótulo curto e seguro de exibir: tipo + limite, código ou status (nunca a mensagem).
+
+    Num 429 vêm também os números, ex.: "RateLimitError OTPM: Limit 1000, Used 253, Requested 816".
+    """
     detail = rate_limit_window(exc) or _error_body(exc).get("code") or getattr(exc, "status_code", None)
-    return f"{type(exc).__name__} {detail}" if detail else type(exc).__name__
+    label = f"{type(exc).__name__} {detail}" if detail else type(exc).__name__
+    usage = rate_limit_usage(exc)
+    return f"{label}: {usage}" if usage else label
 
 
 def _is_daily_quota(exc: BaseException) -> bool:
@@ -174,9 +216,14 @@ def text_of(content: str | list) -> str:
 
 
 def list_models(api_key: str) -> list[str]:
-    """Modelos ativos para a chave; útil quando o modelo não é encontrado.
+    """Modelos ativos que aceitam ferramentas; útil quando o modelo não é encontrado.
 
-    A API não diz quais aceitam ferramentas: confira na página Tool Use da documentação.
+    Quem aceita ferramentas tem "tools" em supported_features (API real, 2026-10-22); o campo
+    falta em alguns modelos (ex.: os de áudio) e não está nos tipos do SDK. Se nenhum modelo
+    trouxer o campo, devolve todos os ativos.
     """
     client = groq.Groq(api_key=api_key, max_retries=0, timeout=REQUEST_TIMEOUT)  # mesma política do resto
-    return sorted(model.id for model in client.models.list().data if getattr(model, "active", True))
+    models = [model for model in client.models.list().data if getattr(model, "active", True)]
+    if any(getattr(model, "supported_features", None) for model in models):
+        models = [model for model in models if "tools" in (getattr(model, "supported_features", None) or [])]
+    return sorted(model.id for model in models)

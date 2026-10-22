@@ -7,8 +7,8 @@ raciocina em passos, mantendo o contexto até entregar o resultado:
 
 - **modelo** (Groq via `langchain-groq`), que só *pede* as chamadas de ferramenta; quem executa é o nosso código;
 - **memória de trabalho**: a API é *stateless*, então o histórico completo é reenviado a cada passo;
-- **registry de ferramentas**: `update_plan` (raciocínio explícito); a resposta final vem em texto (`finish`, uma
-  ferramenta terminal, é opcional);
+- **registry de ferramentas**: `update_plan` (raciocínio explícito; a 1ª chamada é obrigada a usá-la); a resposta final
+  vem em texto (`finish`, uma ferramenta terminal, é opcional);
 - **loop manual** de ferramentas, sem agentes prontos, para enxergar cada passo;
 - **tracing** próprio: tokens, latência, `finish_reason`, tentativas retentadas, plano por passo e motivo de parada.
 
@@ -18,7 +18,7 @@ raciocina em passos, mantendo o contexto até entregar o resultado:
 
 ```
 workshop_agentes/
-  llm.py              build_llm, invoke_with_retry (único ponto de retry), text_of, list_models
+  llm.py              build_llm, invoke_with_retry (único ponto de retry), error_label, text_of, list_models
   agent/config.py     DEFAULT_MODEL, get_secret, AgentConfig
   agent/memory.py     WorkingMemory (histórico + invariante chamada -> resultado)
   agent/loop.py       Agent e AgentResult (o loop)
@@ -51,7 +51,8 @@ Se o repositório for atualizado depois de você importar o pacote, reinicie o a
 
 ## Rodando localmente
 
-Requer Python 3.10+.
+Requer Python 3.10+. O `requirements.txt` fixa faixas compatíveis das dependências; versões testadas (2026-10-22):
+langchain-core 1.6.12, langchain-groq 1.1.3 (com groq 0.37.1) e python-dotenv 1.2.4.
 
 ```bash
 python3 -m venv .venv
@@ -102,17 +103,25 @@ Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
   documentação do Groq; `length` indica que essa resposta foi cortada pelo limite de tokens. Antes a resposta ia dentro
   da ferramenta `finish`, e respostas longas em Markdown dentro do JSON causaram o `tool_use_failed` do gpt-oss e os
   cortes abaixo; `finish` continua disponível como ferramenta terminal opcional.
+- **Primeiro passo forçado:** a 1ª chamada ao modelo usa `tool_choice` para obrigá-lo a chamar `update_plan`
+  (`AgentConfig.first_tool`; `None` deixa o modelo decidir). Antes, com o modelo livre, ele às vezes pulava o plano
+  (ex.: "Quanto é 2+2?" em 1 passo). Sem outras ferramentas, o run típico tem 2 passos (plano e resposta em texto);
+  isso não é um limite (`max_steps=8`): com ferramentas que buscam ou executam algo, os passos aumentam.
 - **Tamanho da resposta:** `build_llm` sempre envia `max_tokens=8192`. Sem limite ou com 2048, o Groq cortou a resposta
   dentro do `finish` em ~1000 caracteres, sem avisar (o `finish_reason` continuou `tool_calls`); com 8192 ela veio
   completa.
 - **Limite de saída (OTPM):** além dos limites por requisição e por token, o qwen tem um limite de tokens de **saída** por
   minuto (1000 no plano gratuito testado). Ele não aparece nos cabeçalhos da resposta, só no erro 429; na prática cabe
-  mais ou menos um run por minuto. O relatório de tracing mostra cada tentativa retentada (ex.: `RateLimitError OTPM`).
+  mais ou menos um run por minuto. Antes de gerar, o Groq reserva uma **estimativa** da saída (ex.: 816 tokens para uma
+  chamada que gerou ~140), e a cota se recompõe aos poucos ao longo do minuto. O relatório de tracing mostra cada
+  tentativa retentada com os números do limite (ex.: `RateLimitError OTPM: Limit 1000, Used 253, Requested 816`), e com
+  `verbose=True` o agente avisa ao vivo quando está esperando.
 - **Limites do plano gratuito:** cada passo do agente é uma chamada à API (`max_steps=8` por padrão) e reenvia o histórico
   inteiro, então os tokens de entrada crescem a cada passo; o limite de **tokens por minuto** é o que costuma estourar
   primeiro.
-- **Retry com limite:** 429 por minuto, 5xx, falha de conexão e chamada de ferramenta malformada são retentados com
-  backoff, no máximo **3 tentativas** por chamada e **30 s** de espera cada (pior caso ≈ 1 min por chamada, mais o
-  timeout de 30 s por requisição). Se a API pedir uma espera maior que 30 s, a chamada falha na hora em vez de travar o
-  notebook. Limite diário (RPD/TPD) esgotado falha na hora com `DailyQuotaError` (a detecção ainda será confirmada contra
-  a API real).
+- **Retry com limite:** um 429 por minuto (RPM, TPM, OTPM) é retentado enquanto a espera somada couber em **60 s** por
+  chamada (`RATE_LIMIT_BUDGET`, o tempo de a cota se recompor). Cada espera é a que a API pede (`retry-after`) ou o
+  backoff, o que for maior. Se a próxima espera não couber, a chamada falha na hora em vez de travar o notebook. 5xx,
+  falha de conexão e chamada de ferramenta malformada têm no máximo **3 tentativas** e **30 s** de espera cada (pior
+  caso ≈ 1 min), mais o timeout de 30 s por requisição. Limite diário (RPD/TPD) esgotado falha na hora com
+  `DailyQuotaError` (a detecção ainda será confirmada contra a API real).

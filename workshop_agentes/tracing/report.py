@@ -87,15 +87,20 @@ def _step_lines(number: int, step: Span, kids: list[Span]) -> list[str]:
         f"  ferramentas: {', '.join(s.name for s in tool_calls) or '-'}",
     ]
     for s in llm_calls:
+        if s.attrs.get("forced_tool"):
+            lines.append(f"  tool_choice forçado: {s.attrs['forced_tool']}")
+        if s.attrs.get("text_chars"):
+            lines.append(f"  texto junto com chamada (não é a resposta): {s.attrs['text_chars']} caracteres")
+        if s.attrs.get("empty_reply"):
+            lines.append("  resposta vazia: o agente pediu a resposta de novo")
         if s.attrs.get("retries"):
             lines.append(f"  retentado: {'; '.join(s.attrs['retries'])}")
     for s in kids:
         if "error" in s.attrs:
             lines.append(f"  erro em {s.name}: {s.attrs['error']}")
-    for s in tool_calls:
-        if s.name == "update_plan":
-            args = s.attrs.get("args")
-            args = args if isinstance(args, dict) else {}
+    for s in tool_calls:  # o plano de qualquer ferramenta com esses campos (a do update_plan)
+        args = s.attrs.get("args")
+        if isinstance(args, dict) and any(key in args for key in PLAN_FIELDS):
             lines.extend(f"  {key}: {args.get(key, '-')}" for key in PLAN_FIELDS)
     return lines
 
