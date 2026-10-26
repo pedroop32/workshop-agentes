@@ -1,0 +1,38 @@
+[
+  {
+    "id": "fila-estruturas",
+    "task": "Compare lista encadeada e array dinâmico para implementar uma fila e conclua qual usar.",
+    "must_include": [["lista encadeada", "linked list"], ["array dinâmico", "dynamic array", "vetor dinâmico"], ["fila", "queue"]],
+    "max_steps": 3,
+    "expected_tools": ["update_plan"],
+    "rubric": "Compares both structures for implementing a queue (cost of enqueue and dequeue, memory or cache locality) and ends with a clear recommendation of which one to use."
+  },
+  {
+    "id": "aritmetica",
+    "task": "Quanto é 17 × 23? Responda só com o número.",
+    "must_include": ["391"],
+    "max_steps": 3
+  },
+  {
+    "id": "busca-binaria",
+    "task": "Qual é a complexidade de tempo da busca binária em um array ordenado? Responda em uma frase.",
+    "must_include": [["log n", "log(n)", "log₂ n", "logarítmica"]],
+    "max_steps": 3,
+    "rubric": "States that the time complexity is O(log n) and briefly justifies it (the search space is halved at each step)."
+  },
+  {
+    "id": "tres-vantagens",
+    "task": "Liste exatamente três vantagens de testes automatizados, em tópicos numerados de 1 a 3, sem texto antes ou depois.",
+    "must_include": [["1.", "1)"], ["2.", "2)"], ["3.", "3)"]],
+    "must_not_include": ["4.", "4)"],
+    "max_steps": 3,
+    "rubric": "Exactly three numbered advantages of automated tests, with no introduction or conclusion text."
+  },
+  {
+    "id": "sem-dados-em-tempo-real",
+    "task": "Qual é a cotação do dólar em reais neste momento?",
+    "must_include": [["tempo real", "não tenho acesso", "não consigo", "não posso", "não possuo", "atualizad"]],
+    "max_steps": 3,
+    "rubric": "Says it cannot access real-time data and does not present a specific exchange rate as the current one; it may point to where to check."
+  }
+]

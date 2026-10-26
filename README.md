@@ -26,6 +26,7 @@ workshop_agentes/
   tools/core.py       update_plan e finish (terminal opcional)
   tracing/tracer.py   Span e Tracer
   tracing/report.py   relatório em texto
+  evals/              golden set, checks, juiz LLM opcional, runner, relatório e CLI (python -m workshop_agentes.evals)
 tests/                testes offline (pytest) com modelo falso
 workshop.ipynb        notebook do workshop (Colab)
 ```
@@ -90,6 +91,37 @@ Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
 ```bash
 .venv/bin/python -m pytest
 ```
+
+## Avaliação (evals)
+
+O módulo `workshop_agentes/evals` roda o agente num **golden set** (`workshop_agentes/evals/golden_set.json`) e confere
+cada run: se **concluiu** (resposta final em texto), se houve **erro** de modelo ou de ferramenta, os **termos
+esperados** na resposta (sem diferenciar maiúsculas e acentos), o número de **passos** e as **ferramentas** chamadas.
+Opcionalmente, um **juiz LLM** compara a resposta com a rubrica do caso. As métricas vêm do tracing de cada run:
+latência, tokens, chamadas ao modelo e retentativas. O resumo mostra a taxa de sucesso e de conclusão da suíte.
+
+```bash
+.venv/bin/python -m workshop_agentes.evals --dry-run      # valida o golden set e estima as chamadas; não usa a API
+.venv/bin/python -m workshop_agentes.evals                # roda todos os casos (API real)
+.venv/bin/python -m workshop_agentes.evals --only aritmetica busca-binaria
+.venv/bin/python -m workshop_agentes.evals --judge        # + juiz nas rubricas (+1 chamada por caso com rubrica)
+.venv/bin/python -m workshop_agentes.evals --rescore eval_results/<data-hora>.json   # reavalia sem rodar o agente
+```
+
+- **Saídas:** o relatório por caso e o resumo no terminal; em `eval_results/` (não versionada), o `.txt` com o tracing
+  completo de cada run e o `.json` com os runs, que o `--rescore` reavalia depois de você mudar as expectativas, sem
+  chamar a API (o juiz só roda de novo com `--judge`). O código de saída é 0 quando nenhum caso falha.
+- **Custo:** cada caso é um run (≥ 2 chamadas: o plano e a resposta); os 5 casos gastam ≈ 10 chamadas e, com o limite
+  de saída por minuto (OTPM), levam alguns minutos. Erro que se repetiria em todos os casos (chave inválida, modelo
+  inexistente, cota diária) interrompe a suíte. Outras opções: `--model`, `--judge-model`, `--golden`, `--out` e
+  `--quiet` (esconde as notas `→` do agente e os avisos de retentativa).
+- **Formato de um caso:** `id`, `task` e, opcionais, `must_include` (cada item é um termo ou uma lista de alternativas),
+  `must_not_include`, `max_steps`, `expected_tools`, `forbidden_tools` e `rubric` (em inglês, para o juiz). Campo
+  desconhecido é erro, para um erro de digitação não desligar um check em silêncio.
+- **Ferramentas novas:** registre-as em `build_registry()` (`workshop_agentes/evals/__main__.py`), como no notebook. Um
+  caso com `"expected_tools": ["nome"]` fica **pulado** (sem chamar a API) enquanto a ferramenta não estiver
+  registrada. Os checks de ferramenta leem os spans `tool_call`, então valem para qualquer ferramenta.
+- No notebook, o extra **E5** roda a mesma avaliação com o `agent` da seção 3 (por padrão, só o caso `aritmetica`).
 
 ## Notas
 

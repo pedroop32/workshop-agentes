@@ -7,3 +7,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ipynb_checkpoints/
+
+# Resultados dos evals (python -m workshop_agentes.evals)
+eval_results/
