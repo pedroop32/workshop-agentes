@@ -25,13 +25,17 @@ def format_case(r: CaseResult, trace: bool = False) -> str:
     if r.result is None:
         return "\n".join(lines)
     res, m = r.result, run_metrics(r.result)
-    latency = f"{m['run_latency']:.2f}s" if m["run_latency"] is not None else "-"
     lines.append(
-        f"  run: {res.reason} | passos={res.steps} | finish_reason={res.finish_reason} | latência {latency}"
+        f"  run: {res.reason} | passos={res.steps} | finish_reason={res.finish_reason}"
         f" | tokens in={m['input_tokens']} out={m['output_tokens']} total={m['total_tokens']}"
     )
+    if m["run_latency"] is not None:
+        lines.append(
+            f"  latência: total {m['run_latency']:.2f}s | sem esperas de 429 {m['net_latency']:.2f}s"
+            f" (esperas {m['rate_limit_wait']:.1f}s)"
+        )
     lines.append(
-        f"  chamadas ao modelo={m['llm_calls']} | retentativas={m['retries']}"
+        f"  chamadas ao modelo={m['llm_calls']} | retentativas: agente={m['retries']}, juiz={len(r.judge_retries)}"
         f" | ferramentas: {', '.join(m['tools_used']) or '-'}"
     )
     lines.extend(f"  {CHECK_MARKS[c.passed]} {c.name}" + (f": {c.detail}" if c.detail else "") for c in r.checks)
@@ -40,6 +44,8 @@ def format_case(r: CaseResult, trace: bool = False) -> str:
         answer = answer[:ANSWER_PREVIEW] + "…"
     lines.append("  resposta: " + answer.replace("\n", "\n    "))
     if trace:
+        if r.judge_retries:
+            lines.append(f"  juiz retentado: {'; '.join(r.judge_retries)}")
         lines.append(format_report(res.spans))
     return "\n".join(lines)
 
@@ -49,6 +55,7 @@ def summarize(results: Sequence[CaseResult]) -> dict[str, Any]:
     executed = [r for r in results if r.result is not None]
     metrics = [run_metrics(r.result) for r in executed]
     latencies = [m["run_latency"] for m in metrics if m["run_latency"] is not None]
+    net_latencies = [m["net_latency"] for m in metrics if m["net_latency"] is not None]
     status = Counter(r.status for r in results)
     judged = [c for r in executed for c in r.checks if c.name == JUDGE_CHECK and c.passed is not None]
     summary: dict[str, Any] = {
@@ -62,11 +69,11 @@ def summarize(results: Sequence[CaseResult]) -> dict[str, Any]:
         "model_errors": sum(r.result.reason == "error" for r in executed),
         "tool_errors": sum(len(m["tool_errors"]) for m in metrics),
         "reasons": dict(Counter(r.result.reason for r in executed)),
-        "latency_mean": mean(latencies) if latencies else None,
-        "latency_median": median(latencies) if latencies else None,
-        "latency_max": max(latencies) if latencies else None,
+        "latency": _stats(latencies),
+        "net_latency": _stats(net_latencies),
         "llm_calls": sum(m["llm_calls"] for m in metrics),
         "retries": sum(m["retries"] for m in metrics),
+        "judge_retries": sum(len(r.judge_retries) for r in results),
         "judged": len(judged),
         "judge_passed": sum(bool(c.passed) for c in judged),
         "judge_tokens": sum(r.judge_tokens for r in results),
@@ -76,6 +83,7 @@ def summarize(results: Sequence[CaseResult]) -> dict[str, Any]:
     summary["success_rate"] = summary["passed"] / len(executed) if executed else None
     summary["completion_rate"] = summary["completed"] / len(executed) if executed else None
     summary["tokens_mean"] = summary["total_tokens"] / len(executed) if executed else None
+    summary["retries_total"] = summary["retries"] + summary["judge_retries"]
     return summary
 
 
@@ -96,18 +104,28 @@ def format_summary(results: Sequence[CaseResult]) -> str:
         f" | runs com erro do modelo: {s['model_errors']} | erros de ferramenta: {s['tool_errors']}",
         "Motivos de parada: " + ", ".join(f"{reason}={n}" for reason, n in s["reasons"].items()),
     ]
-    if s["latency_mean"] is not None:
-        lines.append(
-            f"Latência por caso: média {s['latency_mean']:.2f}s | mediana {s['latency_median']:.2f}s"
-            f" | máx {s['latency_max']:.2f}s"
-        )
+    for label, key in (("total", "latency"), ("sem esperas de 429", "net_latency")):
+        if s[key] is not None:
+            st = s[key]
+            lines.append(
+                f"Latência por caso ({label}): média {st['mean']:.2f}s | mediana {st['median']:.2f}s"
+                f" | máx {st['max']:.2f}s | soma {st['sum']:.2f}s"
+            )
     lines += [
         f"Tokens: total={s['total_tokens']} (in={s['input_tokens']} out={s['output_tokens']})"
         f" | média por caso={s['tokens_mean']:.0f}",
-        f"Chamadas ao modelo: {s['llm_calls']} | retentativas: {s['retries']}",
+        f"Chamadas ao modelo: {s['llm_calls']} | retentativas: agente={s['retries']}, juiz={s['judge_retries']},"
+        f" total={s['retries_total']}",
     ]
     if s["judged"] or s["judge_tokens"]:
         lines.append(f"Juiz: {s['judged']} avaliados, {s['judge_passed']} aprovados | tokens do juiz={s['judge_tokens']}")
     if s["failed_checks"]:
         lines.append("Checks que falharam: " + "; ".join(f"{name} ({n})" for name, n in s["failed_checks"].items()))
     return "\n".join(lines)
+
+
+def _stats(values: Sequence[float]) -> dict[str, float] | None:
+    """Média, mediana, máximo e soma (None sem valores)."""
+    if not values:
+        return None
+    return {"mean": mean(values), "median": median(values), "max": max(values), "sum": sum(values)}

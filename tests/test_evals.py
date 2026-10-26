@@ -8,13 +8,14 @@ from fakes import PLAN_ARGS, ScriptedChatModel, ai, bad_request_error, call, rat
 from langchain_core.tools import tool
 
 from workshop_agentes import llm
+from workshop_agentes.agent import loop
 from workshop_agentes.agent.config import AgentConfig
 from workshop_agentes.agent.loop import Agent, AgentResult
 from workshop_agentes.agent.memory import WorkingMemory
 from workshop_agentes.evals import __main__ as cli
 from workshop_agentes.evals import judge as judge_module
 from workshop_agentes.evals.cases import EvalCase, load_golden_set
-from workshop_agentes.evals.checks import evaluate, normalize, run_metrics
+from workshop_agentes.evals.checks import evaluate, normalize, rate_limit_wait, run_metrics
 from workshop_agentes.evals.judge import JUDGE_CHECK, Judge
 from workshop_agentes.evals.report import format_case, format_summary, summarize
 from workshop_agentes.evals.runner import CaseResult, load_results, rescore, run_suite, save_results, score
@@ -211,8 +212,10 @@ def test_judge_announces_retries_like_the_agent(monkeypatch, capsys, verbose):
     monkeypatch.setattr(judge_module, "invoke_with_retry", partial(llm.invoke_with_retry, sleep=lambda seconds: None))
     otpm = rate_limit_error(window="output tokens per minute (OTPM)")
     model = ScriptedChatModel(script=[otpm, ai(call("Verdict", {"passed": True, "reason": "ok"}))])
-    check, _ = Judge(model, verbose=verbose).grade(EvalCase("a", "t", rubric="r"), "resposta")
-    assert check.passed is True
+    grade = Judge(model, verbose=verbose).grade(EvalCase("a", "t", rubric="r"), "resposta")
+    assert grade.check.passed is True
+    [note] = grade.retries  # gravada mesmo sem verbose, no formato do tracing do agente
+    assert note.startswith("RateLimitError OTPM") and 7.0 <= rate_limit_wait(grade.retries) <= 8.05  # retry-after 7 + jitter
     out = capsys.readouterr().out
     assert ("[juiz retentando em" in out and "RateLimitError OTPM" in out) is verbose
 
@@ -232,6 +235,53 @@ def test_rubric_without_judge_or_answer_makes_no_call():
     outcome = score(EvalCase("a", "t", rubric="r"), result_of(None, reason="error"), judge)
     assert checks_by_name(outcome)[JUDGE_CHECK].detail == "não avaliado: sem resposta"
     assert model.received == []
+
+
+# --- Latência sem esperas de 429 e retentativas ---------------------------------
+
+
+def test_rate_limit_wait_counts_only_429_notes():
+    notes = [
+        "RateLimitError OTPM: Limit 1000, Used 253, Requested 816 (espera 3.1s)",
+        "InternalServerError 503 (espera 1.0s)",  # retentado, mas não é 429
+        "RateLimitError RPM (espera 2.0s)",
+    ]
+    assert rate_limit_wait(notes) == pytest.approx(5.1)
+    assert rate_limit_wait([]) == 0
+
+
+def no_sleep(monkeypatch):
+    for module in (loop, judge_module):
+        monkeypatch.setattr(module, "invoke_with_retry", partial(llm.invoke_with_retry, sleep=lambda seconds: None))
+
+
+def test_latency_and_retries_of_agent_and_judge_are_reported_apart(monkeypatch, tmp_path):
+    no_sleep(monkeypatch)
+    otpm = rate_limit_error(window="output tokens per minute (OTPM)")
+    agent, _ = make_agent([otpm, *plan_then("O(log n)")])
+    judge = Judge(ScriptedChatModel(script=[otpm, otpm, ai(call("Verdict", {"passed": True, "reason": "ok"}))]), verbose=False)
+    [outcome] = run_suite(agent, [EvalCase("a", "t", rubric="r")], judge=judge, log=None)
+
+    m = run_metrics(outcome.result)  # a nota lida é a que o loop gravou de verdade
+    assert m["retries"] == 1 and 7.0 <= m["rate_limit_wait"] <= 8.05
+    assert m["net_latency"] == max(0.0, m["run_latency"] - m["rate_limit_wait"])
+    assert len(outcome.judge_retries) == 2
+
+    s = summarize([outcome])
+    assert (s["retries"], s["judge_retries"], s["retries_total"]) == (1, 2, 3)
+    assert s["latency"]["sum"] == m["run_latency"] and s["net_latency"]["max"] == m["net_latency"]
+    summary = format_summary([outcome])
+    assert "retentativas: agente=1, juiz=2, total=3" in summary
+    assert "Latência por caso (total)" in summary and "Latência por caso (sem esperas de 429)" in summary
+    text = format_case(outcome, trace=True)
+    assert "latência: total" in text and "sem esperas de 429" in text and "retentativas: agente=1, juiz=2" in text
+    assert "juiz retentado: RateLimitError OTPM" in text
+
+    path = tmp_path / "runs.json"
+    save_results([outcome], path)
+    _, saved = load_results(path)
+    assert len(saved["a"]["judge_retries"]) == 2
+    assert run_metrics(rescore([outcome.case], saved)[0].result)["rate_limit_wait"] == m["rate_limit_wait"]
 
 
 # --- Relatório --------------------------------------------------------------------

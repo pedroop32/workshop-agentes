@@ -98,7 +98,8 @@ O módulo `workshop_agentes/evals` roda o agente num **golden set** (`workshop_a
 cada run: se **concluiu** (resposta final em texto), se houve **erro** de modelo ou de ferramenta, os **termos
 esperados** na resposta (sem diferenciar maiúsculas e acentos), o número de **passos** e as **ferramentas** chamadas.
 Opcionalmente, um **juiz LLM** compara a resposta com a rubrica do caso. As métricas vêm do tracing de cada run:
-latência, tokens, chamadas ao modelo e retentativas. O resumo mostra a taxa de sucesso e de conclusão da suíte.
+latência (total e sem as esperas por 429), tokens, chamadas ao modelo e retentativas (do agente e do juiz,
+separadas e somadas). O resumo mostra a taxa de sucesso e de conclusão da suíte.
 
 ```bash
 .venv/bin/python -m workshop_agentes.evals --dry-run      # valida o golden set e estima as chamadas; não usa a API

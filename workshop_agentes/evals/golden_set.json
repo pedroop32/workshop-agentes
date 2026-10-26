@@ -5,7 +5,7 @@
     "must_include": [["lista encadeada", "linked list"], ["array dinâmico", "dynamic array", "vetor dinâmico"], ["fila", "queue"]],
     "max_steps": 3,
     "expected_tools": ["update_plan"],
-    "rubric": "Compares both structures for implementing a queue (cost of enqueue and dequeue, memory or cache locality) and ends with a clear recommendation of which one to use."
+    "rubric": "Compares both structures for implementing a queue (cost of enqueue and dequeue, memory use or cache locality) and ends with a clear recommendation that is technically sound and justified by that comparison. Any choice is acceptable (for example a circular dynamic array, a linked list, or one of them depending on stated conditions) as long as the reasoning supports it."
   },
   {
     "id": "aritmetica",
@@ -18,7 +18,7 @@
     "task": "Qual é a complexidade de tempo da busca binária em um array ordenado? Responda em uma frase.",
     "must_include": [["log n", "log(n)", "log₂ n", "logarítmica"]],
     "max_steps": 3,
-    "rubric": "States that the time complexity is O(log n) and briefly justifies it (the search space is halved at each step)."
+    "rubric": "States that the time complexity is O(log n) (logarithmic). A short answer without justification is valid, because the task asks for a single sentence."
   },
   {
     "id": "tres-vantagens",

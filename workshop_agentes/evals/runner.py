@@ -30,7 +30,8 @@ class CaseResult:
     status: "pass" (nenhum check reprovado), "fail", "skip" (ferramenta esperada não registrada)
       ou "not_run" (suíte interrompida por erro fatal); note explica skip e not_run;
     result: o AgentResult do run (None se não rodou; relido de JSON, vem sem as mensagens);
-    judge_tokens: tokens gastos pelo juiz neste caso.
+    judge_tokens / judge_retries: tokens gastos e tentativas retentadas do juiz neste caso (as do
+      agente ficam nos spans do run).
     """
 
     case: EvalCase
@@ -39,6 +40,7 @@ class CaseResult:
     result: AgentResult | None = None
     note: str | None = None
     judge_tokens: int = 0
+    judge_retries: list[str] = field(default_factory=list)
 
 
 def missing_tools(case: EvalCase, registered: Collection[str]) -> list[str]:
@@ -49,17 +51,19 @@ def missing_tools(case: EvalCase, registered: Collection[str]) -> list[str]:
 def score(case: EvalCase, result: AgentResult, judge: Judge | None = None) -> CaseResult:
     """Checks determinísticos + rubrica; o juiz só é chamado se existir, houver rubrica e resposta."""
     checks = evaluate(case, result)
-    judge_tokens = 0
+    grade = None
     if case.rubric:
         if judge is None:
             checks.append(CheckResult(JUDGE_CHECK, None, "não avaliado: rode com --judge"))
         elif not (result.answer or "").strip():
             checks.append(CheckResult(JUDGE_CHECK, None, "não avaliado: sem resposta"))
         else:
-            check, judge_tokens = judge.grade(case, result.answer)
-            checks.append(check)
+            grade = judge.grade(case, result.answer)
+            checks.append(grade.check)
     status = "fail" if any(c.passed is False for c in checks) else "pass"
-    return CaseResult(case, status, checks, result, judge_tokens=judge_tokens)
+    if grade is None:
+        return CaseResult(case, status, checks, result)
+    return CaseResult(case, status, checks, result, judge_tokens=grade.tokens, judge_retries=grade.retries)
 
 
 def run_suite(
@@ -135,6 +139,7 @@ def _case_to_dict(r: CaseResult) -> dict[str, Any]:
         "status": r.status,
         "note": r.note,
         "judge_tokens": r.judge_tokens,
+        "judge_retries": r.judge_retries,
         "checks": [asdict(c) for c in r.checks],
         "result": run,
     }
