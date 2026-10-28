@@ -23,6 +23,7 @@ def test_agent_config_defaults():
     assert cfg.system_prompt == SYSTEM_PROMPT
     assert "update_plan" in SYSTEM_PROMPT and "plain text" in SYSTEM_PROMPT
     assert "finish" not in SYSTEM_PROMPT  # a resposta final vem em texto (no_tool_call)
+    assert "cannot do it" in SYSTEM_PROMPT and "never invent" in SYSTEM_PROMPT  # avisa quando falta a ferramenta
 
 
 def test_default_model_is_groq_qwen():

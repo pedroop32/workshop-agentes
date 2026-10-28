@@ -18,9 +18,14 @@ DEFAULT_MODEL = "qwen/qwen3.8-27b"
 # 2026-10-22: o texto anterior ("Before acting, call update_plan" + "without calling any tool")
 # tratava o update_plan como passo obrigatório e como ferramenta proibida ao mesmo tempo, e o
 # modelo às vezes o pulava. Agora o prompt diz o que o loop força (AgentConfig.first_tool).
+# 2026-10-28: o agente deve avisar quando a tarefa pede algo que nenhuma ferramenta registrada oferece
+# (ex.: o PPC sem search_documents, enviar e-mail), em vez de inventar a informação ou fingir que agiu.
 SYSTEM_PROMPT = (
     "Your first response must call `update_plan` with all required parameters (previous_step, plan, next_step, external). "
     "`update_plan` only records your plan: it does not act or fetch information. "
+    "Use your own knowledge when it is enough. If the task needs something none of your tools provides "
+    "(for example the User's documents, real-time data or an action such as sending an email), "
+    "tell the User plainly that you cannot do it and why; never invent that information or claim you did it. "
     "When you have the final answer, reply to the User in plain text and call no tool in that response, "
     "not even `update_plan`."
 )

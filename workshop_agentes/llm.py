@@ -184,6 +184,30 @@ def error_label(exc: BaseException) -> str:
     return f"{label}: {usage}" if usage else label
 
 
+def explain_error(exc: BaseException, api_key: str | None = None) -> str:
+    """O que fazer diante de uma falha na chamada, em português; nunca a mensagem do erro (tem dados da conta).
+
+    Com api_key, um modelo não encontrado vem com os modelos que aceitam ferramentas (list_models).
+    """
+    if isinstance(exc, DailyQuotaError):
+        return str(exc)  # mensagem nossa, sem dados da conta
+    if isinstance(exc, groq.RateLimitError):  # o invoke_with_retry já esperou o que cabia no orçamento
+        return f"Limite por minuto atingido ({rate_limit_window(exc) or 'limite'}): espere cerca de 1 minuto e rode de novo."
+    if isinstance(exc, groq.AuthenticationError):
+        return "Chave recusada: confira o secret GROQ_API_KEY e se o notebook tem acesso a ele."
+    if isinstance(exc, groq.NotFoundError):
+        hint = "Modelo não encontrado para a sua chave: defina o secret GROQ_MODEL com um modelo ativo."
+        if api_key:
+            try:
+                hint += " Modelos que aceitam ferramentas: " + ", ".join(list_models(api_key))
+            except Exception as list_exc:
+                hint += f" (não foi possível listar os modelos: {type(list_exc).__name__})"
+        return hint
+    if isinstance(exc, groq.APIConnectionError):
+        return "Sem conexão com a API do Groq (rede ou tempo esgotado): confira a internet e tente de novo."
+    return "Falha inesperada na chamada ao modelo."
+
+
 def _is_daily_quota(exc: BaseException) -> bool:
     """429 de limite diário (RPD ou TPD)? [A VERIFICAR: 429 diário ainda não observado]"""
     return rate_limit_window(exc) in ("RPD", "TPD")

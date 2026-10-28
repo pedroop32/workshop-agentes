@@ -159,6 +159,16 @@ def tool_use_failed_error() -> groq.BadRequestError:
     return _status_error(groq.BadRequestError, 400, error)
 
 
+def not_found_error() -> groq.NotFoundError:
+    """404 de modelo inexistente como o SDK levanta."""
+    return _status_error(groq.NotFoundError, 404, {"message": "The model `fake` does not exist", "code": "model_not_found"})
+
+
+def auth_error() -> groq.AuthenticationError:
+    """401 de chave inválida como o SDK levanta."""
+    return _status_error(groq.AuthenticationError, 401, {"message": "Invalid API Key gsk_fake", "code": "invalid_api_key"})
+
+
 def connection_error() -> groq.APITimeoutError:
     """Timeout como o SDK levanta (subclasse de APIConnectionError)."""
     return groq.APITimeoutError(request=_REQUEST)

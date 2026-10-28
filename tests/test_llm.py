@@ -6,8 +6,10 @@ import groq
 import pytest
 from fakes import (
     FlakyRunnable,
+    auth_error,
     bad_request_error,
     connection_error,
+    not_found_error,
     rate_limit_error,
     server_error,
     tool_use_failed_error,
@@ -184,6 +186,25 @@ def test_error_label_is_short_and_safe():
     assert llm.error_label(otpm) == "RateLimitError OTPM: Limit 3, Used 3, Requested 1"
     assert llm.rate_limit_usage(otpm) == "Limit 3, Used 3, Requested 1"
     assert llm.rate_limit_usage(server_error()) is None
+
+
+def test_explain_error_says_what_to_do_without_the_raw_message(monkeypatch):
+    explain = llm.explain_error
+    assert "espere cerca de 1 minuto" in explain(rate_limit_error(window="input tokens per minute (ITPM)"))
+    assert "ITPM" in explain(rate_limit_error(window="input tokens per minute (ITPM)"))
+    assert "GROQ_API_KEY" in explain(auth_error()) and "gsk_" not in explain(auth_error())
+    assert "conexão" in explain(connection_error())
+    assert explain(DailyQuotaError("Limite diário do Groq esgotado.")) == "Limite diário do Groq esgotado."
+    assert explain(server_error()) == "Falha inesperada na chamada ao modelo."
+    assert "GROQ_MODEL" in explain(not_found_error()) and "Modelos" not in explain(not_found_error())
+    monkeypatch.setattr(llm, "list_models", lambda key: ["modelo-a", "modelo-b"])
+    assert explain(not_found_error(), "chave").endswith("Modelos que aceitam ferramentas: modelo-a, modelo-b")
+
+    def broken(key):
+        raise RuntimeError("sem rede")
+
+    monkeypatch.setattr(llm, "list_models", broken)
+    assert "não foi possível listar os modelos: RuntimeError" in explain(not_found_error(), "chave")
 
 
 def test_rate_limit_usage_keeps_the_numbers_that_exist():

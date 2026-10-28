@@ -105,11 +105,12 @@ def _step_lines(number: int, step: Span, kids: list[Span]) -> list[str]:
         if isinstance(args, dict) and any(key in args for key in PLAN_FIELDS):
             lines.extend(f"  {key}: {args.get(key, '-')}" for key in PLAN_FIELDS)
         else:  # as demais: o que o modelo pediu (ex.: a consulta de uma busca) e o tamanho da observação
-            lines.append(f"  {s.name}: {_preview(args)}{_result_size(s)}")
+            lines.append(f"  {s.name}: {preview_args(args)}{_result_size(s)}")
     return lines
 
 
-def _preview(args: object) -> str:
+def preview_args(args: object) -> str:
+    """Args de uma ferramenta em JSON de uma linha, cortados em ARGS_PREVIEW caracteres."""
     text = json.dumps(args, ensure_ascii=False, default=str)
     return text if len(text) <= ARGS_PREVIEW else text[: ARGS_PREVIEW - 1] + "…"
 

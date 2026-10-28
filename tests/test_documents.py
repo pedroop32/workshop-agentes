@@ -135,6 +135,9 @@ def test_golden_set_has_a_document_case_and_forbids_the_tool_where_it_does_not_h
     cases = {c.id: c for c in load_golden_set()}
     assert cases["documentos-fonte"].expected_tools == ["search_documents"]
     assert cases["aritmetica"].forbidden_tools == ["search_documents"]
+    assert cases["ppc-carga-horaria"].expected_tools == ["search_documents"]  # o PPC de exemplo está versionado
+    assert cases["ppc-carga-horaria"].must_include == [["3472", "3.472"]]
+    assert not cases["acao-sem-ferramenta"].expected_tools and cases["acao-sem-ferramenta"].rubric  # deve recusar
 
 
 def test_evals_register_the_tool_only_when_documents_are_available(monkeypatch):

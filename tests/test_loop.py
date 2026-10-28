@@ -322,6 +322,28 @@ def test_verbose_prints_external_of_any_tool(capsys):
     assert "→ Vou buscar sobre filas." in capsys.readouterr().out  # o loop não testa o nome da ferramenta
 
 
+def test_verbose_shows_live_the_calls_of_tools_without_external(capsys):
+    @tool
+    def search(query: str) -> dict:
+        """Busca falsa."""
+        return {"result": query}
+
+    model = ScriptedChatModel(script=[
+        ai(call("update_plan", PLAN_ARGS)),
+        ai(call("search", {"query": "fila"}), call("search", {})),
+        ai(content="Resposta final."),
+    ])
+    registry = ToolRegistry()
+    registry.register(update_plan)
+    registry.register(search)
+    cfg = AgentConfig()  # verbose=True
+    Agent(model, registry, WorkingMemory(cfg.system_prompt), Tracer(), cfg).run("tarefa")
+    out = capsys.readouterr().out
+    assert '  [search {"query": "fila"} → 18 caracteres]' in out  # os bastidores aparecem durante o run
+    assert "  [search {} → " in out and "[chamada rejeitada: ValidationError]" in out
+    assert "[update_plan" not in out  # o plano continua aparecendo só pela nota "→"
+
+
 BAD_CALL = {"name": "finish", "args": '{"answer": ', "id": "call_bad", "error": "JSON inválido", "type": "invalid_tool_call"}
 
 

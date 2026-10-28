@@ -18,6 +18,7 @@ from workshop_agentes.agent.config import AgentConfig
 from workshop_agentes.agent.memory import WorkingMemory
 from workshop_agentes.llm import error_label, invoke_with_retry, text_of
 from workshop_agentes.tools.registry import ToolRegistry
+from workshop_agentes.tracing.report import preview_args
 from workshop_agentes.tracing.tracer import Span, Tracer
 
 MALFORMED_CALL_ERROR = {
@@ -170,9 +171,11 @@ class Agent:
             self.memory.add_tool_result(ToolMessage(content=content, tool_call_id=call_id, name=name))
             # "external" é a nota para o User (D4), em qualquer ferramenta que a tenha. O raciocínio
             # aparece mesmo quando a chamada é rejeitada, com o aviso.
+            rejected = f" [chamada rejeitada: {s.attrs['error']}]" if "error" in s.attrs else ""
             if self.cfg.verbose and isinstance(args, dict) and args.get("external"):
-                rejected = f" [chamada rejeitada: {s.attrs['error']}]" if "error" in s.attrs else ""
                 print(f"→ {args['external']}{rejected}")
+            elif self.cfg.verbose:  # as demais (ex.: uma busca): o que foi pedido e o tamanho do resultado, ao vivo
+                print(f"  [{name} {preview_args(args)} → {s.attrs['result_chars']} caracteres]{rejected}")
             if self.registry.is_terminal(name) and "error" not in out:
                 terminal_out = out
         for call in ai.invalid_tool_calls:  # argumentos ilegíveis: nada é executado

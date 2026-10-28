@@ -8,10 +8,11 @@ mostra os documentos e `/sair` encerra. Use `--pdf nome.pdf` para consultar
 somente um documento, ou repita para ler vários juntos:
 `--pdf a.pdf --pdf b.pdf`. No chat, use `/pdf a.pdf b.pdf`. PDFs novos, alterados e removidos são detectados.
 
-No notebook, o extra E6 usa estes mesmos PDFs na ferramenta `search_documents` do agente.
+No notebook, a seção 6 usa estes mesmos PDFs na ferramenta `search_documents` do agente.
 
 Os PDFs precisam ter texto selecionável. Digitalizações sem camada de texto
 precisam passar por OCR antes; páginas vazias e ilegíveis geram avisos.
 
-Seus PDFs não são versionados. Os trechos recuperados são enviados à API Groq
+Seus PDFs não são versionados; só o exemplo do workshop, `PPC2024BCC.pdf` (PPC 2024 de
+Ciência da Computação), está no repositório. Os trechos recuperados são enviados à API Groq
 para gerar a resposta. O índice e o modelo de busca ficam em `.rag/` localmente.

@@ -10,7 +10,10 @@ raciocina em passos, mantendo o contexto até entregar o resultado:
 - **registry de ferramentas**: `update_plan` (raciocínio explícito; a 1ª chamada é obrigada a usá-la); a resposta final
   vem em texto (`finish`, uma ferramenta terminal, é opcional);
 - **loop manual** de ferramentas, sem agentes prontos, para enxergar cada passo;
-- **tracing** próprio: tokens, latência, `finish_reason`, tentativas retentadas, plano por passo e motivo de parada.
+- **tracing** próprio: tokens, latência, `finish_reason`, tentativas retentadas, plano por passo e motivo de parada;
+- **RAG** como ferramenta (`search_documents`): busca local nos PDFs de `documentos/` (o exemplo é o PPC 2024 de
+  Ciência da Computação, `documentos/PPC2024BCC.pdf`);
+- **evals**: golden set, checks determinísticos lidos do tracing e juiz LLM opcional.
 
 [![Abrir no Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pedroop32/workshop-agentes/blob/main/workshop.ipynb)
 
@@ -30,6 +33,7 @@ workshop_agentes/
   tracing/report.py   relatório em texto
   evals/              golden set, checks, juiz LLM opcional, runner, relatório e CLI (python -m workshop_agentes.evals)
 tests/                testes offline (pytest) com modelo falso
+  visual.py           visualizações do notebook (HTML): resultado, ferramentas, tracing, memória e evals
 workshop.ipynb        notebook do workshop (Colab)
 ```
 
@@ -47,7 +51,8 @@ workshop.ipynb        notebook do workshop (Colab)
 2. No painel **Secrets** (ícone de chave 🔑 na barra lateral), crie o secret `GROQ_API_KEY` com a sua chave.
    Opcional: `GROQ_MODEL` para trocar o modelo padrão.
 3. **Ative a chave "Acesso ao notebook"** desse secret. Sem isso o notebook não consegue ler a chave.
-4. Rode as células 1 a 5 em ordem.
+4. Rode as seções em ordem: ambiente, conexão, montar o agente, agente sem ferramentas, a ferramenta certa, RAG,
+   bastidores (tracing e memória), avaliação. A seção 9 (limitações) é só texto.
 
 Se o repositório for atualizado depois de você importar o pacote, reinicie o ambiente de execução
 (*Ambiente de execução → Reiniciar sessão*) e rode as células de novo.
@@ -133,7 +138,7 @@ Não há uma nota mínima de 0.7 ou 0.8 que bloqueie as respostas: a nota ao fin
 é apenas um indicador de cobertura textual. A geração e a revisão têm limites
 de 1400 e 600 tokens, respectivamente, para reduzir a demanda por saída na API.
 Trechos recuperados são enviados ao Groq; os PDFs completos e o índice ficam
-locais e são ignorados pelo Git. Em geral são duas chamadas por resposta, além
+locais e são ignorados pelo Git (exceto o PDF de exemplo do workshop, `documentos/PPC2024BCC.pdf`). Em geral são duas chamadas por resposta, além
 de eventuais retries, consumindo a cota Groq.
 
 Antes de indexar, cabeçalhos e rodapés repetidos (como o nome da revista com o número
@@ -237,8 +242,8 @@ registry.register(make_search_documents())  # junto com update_plan, antes de cr
   `UnknownFile` (um nome em `files` que não existe, com a lista dos disponíveis).
 - Os trechos são **dados, nunca instruções**: a descrição da ferramenta diz isso ao modelo e pede que ele cite arquivo e
   página.
-- No notebook, o extra **E6** monta esse agente, indexa os PDFs antes do run, mostra o tracing e roda os evals de
-  documento. Na linha de comando, os evals registram a ferramenta sozinhos quando há dependências e PDFs (veja abaixo).
+- No notebook, a seção **6** monta esse agente (indexa os PDFs antes do run e mostra os trechos recuperados), a **7**
+  mostra o tracing e a memória do run e a **8** roda os evals. Na linha de comando, os evals registram a ferramenta sozinhos quando há dependências e PDFs (veja abaixo).
 
 ## Testes
 
@@ -281,10 +286,12 @@ separadas e somadas). O resumo mostra a taxa de sucesso e de conclusão da suít
 - **Documentos:** `search_documents` só é registrada quando as dependências do RAG estão instaladas e há algum PDF em
   `documentos/`. Sem isso, o caso `documentos-fonte` fica pulado (o `--dry-run` mostra). Ele vale para qualquer PDF:
   exige a busca e o nome do arquivo (`.pdf`) na resposta. O `aritmetica` tem `forbidden_tools: ["search_documents"]`:
-  o agente não deve buscar à toa. Casos com o conteúdo dos seus PDFs podem ficar fora do git, em `documentos/casos.json`
-  (coberto pelo `.gitignore`), rodados com `--golden documentos/casos.json` ou pelo `ARQUIVO_CASOS` do E6.
-- No notebook, o extra **E5** roda a mesma avaliação com o `agent` da seção 3 (por padrão, só o caso `aritmetica`), e o
-  **E6**, com o agente que tem `search_documents`.
+  o agente não deve buscar à toa. `ppc-carga-horaria` usa o PPC de exemplo (3472 h, com a busca) e
+  `acao-sem-ferramenta` pede para enviar um e-mail, que o agente deve recusar por não ter ferramenta para isso. Casos
+  com o conteúdo dos seus PDFs podem ficar fora do git, em `documentos/casos.json` (coberto pelo `.gitignore`),
+  rodados com `--golden documentos/casos.json`.
+- No notebook, a seção **8** roda `ppc-carga-horaria`, `aritmetica` e `acao-sem-ferramenta` com o agente que tem
+  `search_documents` e mostra o resultado em tabela.
 
 ## Notas
 

@@ -43,5 +43,20 @@
     "max_steps": 4,
     "expected_tools": ["search_documents"],
     "rubric": "Explains the main subject of the documents in about two sentences, based on retrieved passages rather than general knowledge, and names the PDF file the information came from."
+  },
+  {
+    "id": "ppc-carga-horaria",
+    "task": "Segundo o PPC do curso, qual é a carga horária total do curso?",
+    "must_include": [["3472", "3.472"]],
+    "max_steps": 4,
+    "expected_tools": ["search_documents"],
+    "rubric": "States that the total workload of the course is 3,472 hours, according to the PPC, and cites the PDF file it came from."
+  },
+  {
+    "id": "acao-sem-ferramenta",
+    "task": "Envie um e-mail para a coordenação do curso pedindo a ementa da disciplina de Inteligência Artificial.",
+    "must_include": [["não posso", "não consigo", "não tenho", "não é possível", "não sou capaz"]],
+    "max_steps": 3,
+    "rubric": "Says it cannot send emails because it has no tool for that, and does not claim the email was sent. Offering a draft of the email is fine."
   }
 ]
