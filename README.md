@@ -83,6 +83,138 @@ print(result.reason, result.finish_reason, result.answer)
 print(format_report(result.spans))
 ```
 
+## RAG: perguntas sobre seus PDFs
+
+A pasta para colocar documentos é **`documentos/`**, na raiz do projeto.
+Neste computador: `/home/fdlthzzz/workshop-agentes/documentos/`.
+Copie os PDFs para ela; subpastas também funcionam. A busca pode consultar todos
+os arquivos ou somente um PDF escolhido.
+
+```bash
+.venv/bin/python -m pip install -r requirements-rag.txt
+./executar_rag.sh
+```
+
+O script usa o Python de `.venv`, lê `GROQ_API_KEY` e `GROQ_MODEL` do `.env`
+existente e abre um chat no terminal. O primeiro uso baixa o modelo de busca
+multilíngue (cerca de 120 MB, mais arquivos auxiliares); os demais reutilizam
+o cache em `.rag/`. Não é necessário banco de dados nem outra chave de API.
+
+```bash
+./executar_rag.sh --listar
+./executar_rag.sh --indexar
+./executar_rag.sh "Qual é o prazo informado nos documentos?"
+./executar_rag.sh --pdf "meu_arquivo.pdf" "Qual é o objetivo deste documento?"
+./executar_rag.sh --pdf contrato_a.pdf --pdf contrato_b.pdf "Compare os prazos dos dois contratos."
+```
+
+Para ler **dois (ou mais) PDFs ao mesmo tempo**, repita `--pdf`. Cada PDF escolhido
+recebe sua própria cota de trechos (4 cada, com dois PDFs), intercalados, para que um
+documento grande não tire o espaço do outro. A resposta diz a qual arquivo pertence
+cada informação, e uma citação nunca é atribuída a um PDF diferente do que a contém.
+
+No chat, `/listar` mostra os arquivos (com `*` nos escolhidos), `/pdf a.pdf b.pdf`
+escolhe os PDFs consultados, `/pdf` sozinho volta a consultar todos e `/sair` encerra.
+Use aspas em nomes com espaços: `/pdf "meu arquivo.pdf" outro.pdf`. Cada pergunta é
+independente: escreva a pergunta completa. Novos PDFs, alterações e remoções são
+detectados antes da próxima pergunta. As páginas citadas são as posições no PDF,
+começando em 1, e podem diferir da numeração impressa no documento.
+
+O sistema combina embeddings locais e BM25, recupera até seis trechos, gera
+afirmações com citações literais e valida os trechos no código. Uma segunda
+chamada ao modelo revisa cada parágrafo separadamente. Parágrafos sem evidência
+válida ou reprovados na revisão são retirados; os demais compõem a resposta.
+Aceita paráfrases e respostas parciais úteis quando o contexto não cobre toda a
+pergunta. Recusa quando nenhum parágrafo tem suporte. Essa revisão também pode errar.
+Não há uma nota mínima de 0.7 ou 0.8 que bloqueie as respostas: a nota ao final
+é apenas um indicador de cobertura textual. A geração e a revisão têm limites
+de 1400 e 600 tokens, respectivamente, para reduzir a demanda por saída na API.
+Trechos recuperados são enviados ao Groq; os PDFs completos e o índice ficam
+locais e são ignorados pelo Git. Em geral são duas chamadas por resposta, além
+de eventuais retries, consumindo a cota Groq.
+
+Antes de indexar, cabeçalhos e rodapés repetidos (como o nome da revista com o número
+da página) são removidos, palavras partidas no fim da linha (`forma-` + `ção`) são
+unidas e `Destacam -se` vira `Destacam-se`. Na busca BM25, palavras como "qual",
+"segundo" e "documento" são ignoradas para não favorecer trechos irrelevantes.
+Se o modelo copia a frase certa mas indica o trecho vizinho (eles se sobrepõem),
+a citação é corrigida para o trecho do mesmo PDF que a contém.
+
+PDFs precisam ter texto extraível. PDFs escaneados precisam de OCR prévio;
+imagens, gráficos e a disposição de tabelas não são interpretados visualmente.
+Páginas sem texto e PDFs corrompidos ou com senha geram avisos. Perguntas que
+dependem de muitos trechos ou de relações entre páginas podem precisar de ajustes.
+
+### Medir a meta de 70–80%
+
+Cada resposta exibe somente o texto completo e uma nota ao final, como `(0.75)`.
+A nota é a **cobertura textual nas citações em escala de 0 a 1**, não uma
+probabilidade de acerto. Fontes e indicadores continuam registrados internamente
+e na saída de avaliação, sem aparecer no texto da resposta. Por padrão, a geração
+usa 1 ou 2 parágrafos curtos, com linguagem simples e cerca de 60 a 120 palavras.
+Perguntas simples podem receber apenas uma ou duas frases; explicações maiores
+ficam para pedidos explícitos de detalhes. Condições essenciais são preservadas.
+A precisão real permanece
+`precision_percent: null` até existir uma avaliação de referência; o sistema
+não transforma cosseno ou nota do modelo em probabilidade de acerto.
+
+A cobertura é a proporção de termos distintos de cada afirmação presentes nas
+suas citações literais, ignorando palavras gramaticais e diferenças de acento
+e maiúsculas. Usa-se a menor cobertura entre as afirmações. Números e negações
+são mantidos. Sinônimos podem reduzir essa cobertura mesmo em uma resposta
+correta, e 100% de cobertura não garante que a conclusão esteja correta.
+A similaridade registrada internamente é o menor dos melhores cossenos das fontes
+citadas por afirmação, sem conversão em porcentagem. Respostas recusadas exibem
+somente a recusa, sem nota inventada.
+
+Não há garantia de precisão para PDFs ainda não avaliados. Similaridade dos
+embeddings e temperatura zero **não são uma probabilidade de resposta correta**.
+Crie um arquivo `perguntas.jsonl` com perguntas reais e respostas de referência,
+incluindo perguntas cuja resposta não existe no documento:
+
+```jsonl
+{"question": "Qual é o prazo de reembolso?", "expected_answer": "Preencha com a resposta conferida no seu PDF e a página."}
+{"question": "Qual é a senha de acesso?", "expected_answer": "Deve recusar se o PDF não informar a senha."}
+```
+
+```bash
+./executar_rag.sh --avaliar perguntas.jsonl --saida .rag/avaliacao.jsonl
+# Abra a saída, confira cada resposta e preencha "correct": true ou false.
+./executar_rag.sh --relatorio .rag/avaliacao.jsonl
+```
+
+Se a avaliação parar no meio (por exemplo, por limite da API), repita o mesmo
+comando: as perguntas já respondidas são mantidas e ela continua de onde parou.
+Uma linha pode ter `"pdfs": ["a.pdf", "b.pdf"]` para avaliar perguntas sobre
+dois documentos juntos.
+
+Para medir só a **busca**, sem gastar cota da API, use as páginas esperadas:
+
+```jsonl
+{"question": "O que é desenvolvimento sustentável?", "pages": [4]}
+{"question": "O que os dois contratos dizem sobre multa?", "pages": [2, 7], "pdfs": ["a.pdf", "b.pdf"]}
+```
+
+```bash
+./executar_rag.sh --avaliar-busca busca.jsonl
+```
+
+`hit_rate` é a fração de perguntas em que alguma página esperada foi enviada ao
+modelo; `first_place_rate`, em que ela veio em primeiro; `mrr` premia posições
+altas. Com `"file"` na linha, a página só conta se for daquele PDF.
+
+Marque `true` somente quando a resposta inteira estiver correta e sustentada
+pelas páginas, ou quando uma recusa for realmente esperada. Marque `false` para
+respostas incorretas, incompletas ou recusas a perguntas respondíveis. O relatório
+mostra acerto entre os casos revisados, precisão entre respostas fornecidas e
+cobertura; recusas não podem esconder falta de cobertura. A meta de 80% só é
+calculada após revisar todas as linhas. Use pelo menos 30 perguntas variadas,
+avalie PDFs representativos e reserve perguntas que não foram usadas em ajustes.
+
+Implementação dos embeddings: [FastEmbed](https://qdrant.tech/documentation/embeddings/fastembed/),
+com [Multilingual E5 small](https://huggingface.co/intfloat/multilingual-e5-small)
+em [ONNX quantizado](https://huggingface.co/Xenova/multilingual-e5-small).
+
 ## Testes
 
 Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
