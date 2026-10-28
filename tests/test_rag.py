@@ -3,11 +3,12 @@
 import json
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 from langchain_core.messages import AIMessage
 
 from workshop_agentes import rag
+
+np = pytest.importorskip("numpy")  # dependências do RAG: pip install -r requirements-rag.txt
 
 
 TEXT = "O prazo para solicitar reembolso é de 30 dias após a compra."

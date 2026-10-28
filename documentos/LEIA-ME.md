@@ -8,6 +8,8 @@ mostra os documentos e `/sair` encerra. Use `--pdf nome.pdf` para consultar
 somente um documento, ou repita para ler vários juntos:
 `--pdf a.pdf --pdf b.pdf`. No chat, use `/pdf a.pdf b.pdf`. PDFs novos, alterados e removidos são detectados.
 
+No notebook, o extra E6 usa estes mesmos PDFs na ferramenta `search_documents` do agente.
+
 Os PDFs precisam ter texto selecionável. Digitalizações sem camada de texto
 precisam passar por OCR antes; páginas vazias e ilegíveis geram avisos.
 

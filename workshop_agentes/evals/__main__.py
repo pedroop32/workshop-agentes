@@ -20,6 +20,7 @@ from workshop_agentes.evals.report import format_case, format_summary
 from workshop_agentes.evals.runner import load_results, missing_tools, rescore, run_suite, save_results
 from workshop_agentes.llm import build_llm
 from workshop_agentes.tools.core import update_plan
+from workshop_agentes.tools.documents import documents_available, make_search_documents
 from workshop_agentes.tools.registry import ToolRegistry
 from workshop_agentes.tracing.tracer import Tracer
 
@@ -31,10 +32,13 @@ def build_registry() -> ToolRegistry:
     """As ferramentas do agente avaliado, as mesmas do notebook.
 
     Ferramenta nova: registre-a aqui (e no notebook); os casos que a têm em expected_tools
-    deixam de ser pulados.
+    deixam de ser pulados. search_documents só entra com as dependências do RAG e algum PDF em
+    documentos/ (como no extra E6); sem eles, os casos que a esperam ficam pulados.
     """
     registry = ToolRegistry()
     registry.register(update_plan)
+    if documents_available():
+        registry.register(make_search_documents())
     return registry
 
 

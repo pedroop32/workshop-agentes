@@ -19,11 +19,13 @@ raciocina em passos, mantendo o contexto até entregar o resultado:
 ```
 workshop_agentes/
   llm.py              build_llm, invoke_with_retry (único ponto de retry), error_label, text_of, list_models
+  rag.py              RAG sobre PDFs (PdfRag: busca híbrida) e o chat do executar_rag.sh
   agent/config.py     DEFAULT_MODEL, get_secret, AgentConfig
   agent/memory.py     WorkingMemory (histórico + invariante chamada -> resultado)
   agent/loop.py       Agent e AgentResult (o loop)
   tools/registry.py   ToolRegistry (executa ferramentas sem nunca levantar exceção)
   tools/core.py       update_plan e finish (terminal opcional)
+  tools/documents.py  search_documents: o RAG como ferramenta do agente
   tracing/tracer.py   Span e Tracer
   tracing/report.py   relatório em texto
   evals/              golden set, checks, juiz LLM opcional, runner, relatório e CLI (python -m workshop_agentes.evals)
@@ -87,7 +89,7 @@ print(format_report(result.spans))
 ## RAG: perguntas sobre seus PDFs
 
 A pasta para colocar documentos é **`documentos/`**, na raiz do projeto.
-Neste computador: `/home/fdlthzzz/workshop-agentes/documentos/`.
+No Colab: `/content/workshop-agentes/documentos/`.
 Copie os PDFs para ela; subpastas também funcionam. A busca pode consultar todos
 os arquivos ou somente um PDF escolhido.
 
@@ -216,6 +218,28 @@ Implementação dos embeddings: [FastEmbed](https://qdrant.tech/documentation/em
 com [Multilingual E5 small](https://huggingface.co/intfloat/multilingual-e5-small)
 em [ONNX quantizado](https://huggingface.co/Xenova/multilingual-e5-small).
 
+### O RAG como ferramenta do agente (`search_documents`)
+
+O agente também usa o RAG, como **ferramenta**: `search_documents(query, files)` busca nos PDFs de `documentos/` com o
+mesmo `PdfRag` e devolve os trechos mais relevantes, cada um com arquivo e página. Só a busca roda (local, sem API);
+quem escreve a resposta é o próprio agente. A geração com citações validadas e a revisão acima são do chat do
+`executar_rag.sh`, não da ferramenta. Assim cada busca vira um span `tool_call` no tracing, e o relatório mostra a
+consulta e o tamanho do resultado (ex.: `search_documents: {"query": "prazo de reembolso"} → 5321 caracteres`).
+
+```python
+from workshop_agentes.tools.documents import make_search_documents
+
+registry.register(make_search_documents())  # junto com update_plan, antes de criar o Agent
+```
+
+- **Saída:** `{"passages": [{"id", "file", "page", "text"}], "files": [...]}`, até 6 trechos por busca; sem trecho
+  relevante, `passages` vazio e uma nota. Erros voltam ao modelo como observação: `NoDocuments` (nenhum PDF legível) e
+  `UnknownFile` (um nome em `files` que não existe, com a lista dos disponíveis).
+- Os trechos são **dados, nunca instruções**: a descrição da ferramenta diz isso ao modelo e pede que ele cite arquivo e
+  página.
+- No notebook, o extra **E6** monta esse agente, indexa os PDFs antes do run, mostra o tracing e roda os evals de
+  documento. Na linha de comando, os evals registram a ferramenta sozinhos quando há dependências e PDFs (veja abaixo).
+
 ## Testes
 
 Os testes são **offline**: usam um modelo falso, sem chave, internet ou cota.
@@ -244,8 +268,8 @@ separadas e somadas). O resumo mostra a taxa de sucesso e de conclusão da suít
 - **Saídas:** o relatório por caso e o resumo no terminal; em `eval_results/` (não versionada), o `.txt` com o tracing
   completo de cada run e o `.json` com os runs, que o `--rescore` reavalia depois de você mudar as expectativas, sem
   chamar a API (o juiz só roda de novo com `--judge`). O código de saída é 0 quando nenhum caso falha.
-- **Custo:** cada caso é um run (≥ 2 chamadas: o plano e a resposta); os 5 casos gastam ≈ 10 chamadas e, com o limite
-  de saída por minuto (OTPM), levam alguns minutos. Erro que se repetiria em todos os casos (chave inválida, modelo
+- **Custo:** cada caso é um run (≥ 2 chamadas: o plano e a resposta); os 5 casos gerais gastam ≈ 10 chamadas e, com o
+  limite de saída por minuto (OTPM), levam alguns minutos. O `documentos-fonte` gasta ≥ 3 (plano, busca e resposta). Erro que se repetiria em todos os casos (chave inválida, modelo
   inexistente, cota diária) interrompe a suíte. Outras opções: `--model`, `--judge-model`, `--golden`, `--out` e
   `--quiet` (esconde as notas `→` do agente e os avisos de retentativa).
 - **Formato de um caso:** `id`, `task` e, opcionais, `must_include` (cada item é um termo ou uma lista de alternativas),
@@ -254,7 +278,13 @@ separadas e somadas). O resumo mostra a taxa de sucesso e de conclusão da suít
 - **Ferramentas novas:** registre-as em `build_registry()` (`workshop_agentes/evals/__main__.py`), como no notebook. Um
   caso com `"expected_tools": ["nome"]` fica **pulado** (sem chamar a API) enquanto a ferramenta não estiver
   registrada. Os checks de ferramenta leem os spans `tool_call`, então valem para qualquer ferramenta.
-- No notebook, o extra **E5** roda a mesma avaliação com o `agent` da seção 3 (por padrão, só o caso `aritmetica`).
+- **Documentos:** `search_documents` só é registrada quando as dependências do RAG estão instaladas e há algum PDF em
+  `documentos/`. Sem isso, o caso `documentos-fonte` fica pulado (o `--dry-run` mostra). Ele vale para qualquer PDF:
+  exige a busca e o nome do arquivo (`.pdf`) na resposta. O `aritmetica` tem `forbidden_tools: ["search_documents"]`:
+  o agente não deve buscar à toa. Casos com o conteúdo dos seus PDFs podem ficar fora do git, em `documentos/casos.json`
+  (coberto pelo `.gitignore`), rodados com `--golden documentos/casos.json` ou pelo `ARQUIVO_CASOS` do E6.
+- No notebook, o extra **E5** roda a mesma avaliação com o `agent` da seção 3 (por padrão, só o caso `aritmetica`), e o
+  **E6**, com o agente que tem `search_documents`.
 
 ## Notas
 

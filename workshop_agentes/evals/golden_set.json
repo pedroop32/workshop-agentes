@@ -11,7 +11,8 @@
     "id": "aritmetica",
     "task": "Quanto é 17 × 23? Responda só com o número.",
     "must_include": ["391"],
-    "max_steps": 3
+    "max_steps": 3,
+    "forbidden_tools": ["search_documents"]
   },
   {
     "id": "busca-binaria",
@@ -34,5 +35,13 @@
     "must_include": [["tempo real", "não tenho acesso", "não consigo", "não posso", "não possuo", "atualizad"]],
     "max_steps": 3,
     "rubric": "Says it cannot access real-time data and does not present a specific exchange rate as the current one; it may point to where to check."
+  },
+  {
+    "id": "documentos-fonte",
+    "task": "Com base nos meus documentos, explique em duas frases o assunto principal e diga de qual arquivo veio a informação.",
+    "must_include": [".pdf"],
+    "max_steps": 4,
+    "expected_tools": ["search_documents"],
+    "rubric": "Explains the main subject of the documents in about two sentences, based on retrieved passages rather than general knowledge, and names the PDF file the information came from."
   }
 ]
