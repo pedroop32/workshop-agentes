@@ -10,3 +10,8 @@ __pycache__/
 
 # Resultados dos evals (python -m workshop_agentes.evals)
 eval_results/
+
+# Documentos pessoais e índice local do RAG
+documentos/**
+!documentos/LEIA-ME.md
+.rag/
